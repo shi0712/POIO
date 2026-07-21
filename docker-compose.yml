@@ -1,0 +1,55 @@
+services:
+  mumble:
+    image: mumblevoip/mumble-server:v1.5.901
+    container_name: poio-mumble
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      MUMBLE_CONFIG_PORT: 64738
+      MUMBLE_CONFIG_SERVER_PASSWORD: ${MUMBLE_SERVER_PASSWORD}
+      MUMBLE_CONFIG_ICE: '"tcp -h 127.0.0.1 -p 6502"'
+      MUMBLE_CONFIG_ICE_SECRET_READ: ${MUMBLE_ICE_SECRET}
+      MUMBLE_CONFIG_ICE_SECRET_WRITE: ${MUMBLE_ICE_SECRET}
+      MUMBLE_SUPERUSER_PASSWORD: ${MUMBLE_SUPERUSER_PASSWORD}
+      MUMBLE_CONFIG_USERS: 200
+      MUMBLE_CONFIG_BANDWIDTH: 128000
+      MUMBLE_CONFIG_WELCOMETEXT: 'POIO 原生 Mumble 语音服务'
+      MUMBLE_CONFIG_REGISTER_NAME: POIO
+      MUMBLE_CONFIG_SSL_CERT: /certs/fullchain.pem
+      MUMBLE_CONFIG_SSL_KEY: /certs/privkey.pem
+    volumes:
+      - ./mumble-data:/data
+      - ./mumble-certs:/certs:ro
+  server:
+    build: .
+    image: poio/server:0.3.8
+    container_name: poio-server
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      HOST: 127.0.0.1
+      PORT: 17920
+      PUBLIC_IP: ${PUBLIC_IP}
+      MUMBLE_PUBLIC_HOST: ${MUMBLE_PUBLIC_HOST}
+      MUMBLE_PORT: 64738
+      MUMBLE_SERVER_PASSWORD: ${MUMBLE_SERVER_PASSWORD}
+      MUMBLE_ICE_ENDPOINT: tcp -h 127.0.0.1 -p 6502
+      MUMBLE_ICE_SECRET: ${MUMBLE_ICE_SECRET}
+      MEDIASOUP_PORT: 17921
+      MEDIASOUP_MIN_PORT: 42000
+      MEDIASOUP_MAX_PORT: 42100
+      DATABASE_PATH: /app/data/echodeck.db
+      BACKUP_PATH: /app/data/backups
+      BACKUP_INTERVAL_HOURS: 24
+      BACKUP_RETENTION_DAYS: 14
+      UPLOAD_PATH: /app/data/uploads
+      DOWNLOAD_PATH: /app/download
+      RELEASE_PATH: /app/releases
+      SESSION_DAYS: 30
+      CORS_ORIGIN: "*"
+    volumes:
+      - ./data:/app/data
+      - ./deploy/download:/app/download:ro
+      - ./releases:/app/releases:ro
+    depends_on:
+      - mumble

@@ -1,0 +1,458 @@
+import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, shell } from 'electron';
+import electronUpdater from 'electron-updater';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const dirname = path.dirname(fileURLToPath(import.meta.url));
+const { autoUpdater } = electronUpdater;
+const appIcon = app.isPackaged ? path.join(process.resourcesPath, 'app.asar', 'build', 'icon.png') : path.join(dirname, '../build/icon.png');
+let mainWindow: BrowserWindow | null = null;
+let splashWindow: BrowserWindow | null = null;
+let mumbleProcess: ChildProcess | null = null;
+let mumbleIdentity = '';
+let mumbleLastFailure = '';
+let desiredMumbleConnection: MumbleConnection | undefined;
+let mumbleRestartTimer: NodeJS.Timeout | undefined;
+let mumbleRestartAttempts = 0;
+let appQuitting = false;
+let mumbleMuted = false;
+let mumbleDeafened = false;
+const mumblePipeSuffix = process.pid.toString(36);
+const mumblePipe = `${String.raw`\\.\pipe\EchoDeckMumble`}-${mumblePipeSuffix}`;
+
+type MumbleConnection = { host:string;port:number;username:string;password:string;channelName:string };
+type MumbleRuntimeState = { state:'disconnected'|'connecting'|'connected'|'reconnecting'|'error';attempt?:number;message?:string };
+type MumbleAudioDevice = { index:number;name:string;selected:boolean };
+type MumbleAudioDevices = { inputBackend?:string;outputBackend?:string;inputs:MumbleAudioDevice[];outputs:MumbleAudioDevice[] };
+type MumbleUserVolume = { username:string;volume:number;talking:boolean };
+type AppUpdateStatus = { state:'idle'|'checking'|'available'|'downloading'|'downloaded'|'up-to-date'|'error'|'development';version?:string;percent?:number;message?:string };
+let appUpdateStatus:AppUpdateStatus={state:'idle'};
+let mumbleRuntimeState:MumbleRuntimeState={state:'disconnected'};
+let lastAppUpdateCheck=0;
+
+function sendToMainWindow(channel:string,value:unknown) {
+  const window=mainWindow;
+  if(!window||window.isDestroyed()||window.webContents.isDestroyed())return;
+  window.webContents.send(channel,value);
+}
+
+function sidecarDirectory() {
+  return app.isPackaged ? path.join(process.resourcesPath, 'mumble') : path.join(dirname, '../resources/mumble');
+}
+
+function publishMumbleState(state:MumbleRuntimeState) {
+  mumbleRuntimeState=state;
+  sendToMainWindow('mumble:state',state);
+  return state;
+}
+
+function connectionIdentity(connection:MumbleConnection) {
+  return `${connection.username}@${connection.host}:${connection.port}`;
+}
+
+function sameMumbleConnection(left:MumbleConnection|undefined,right:MumbleConnection|undefined) {
+  return Boolean(left&&right&&connectionIdentity(left)===connectionIdentity(right)&&left.channelName===right.channelName);
+}
+
+function stopMumble(clearDesired=true) {
+  const child=mumbleProcess;
+  mumbleProcess = null;
+  mumbleIdentity = '';
+  if(clearDesired){
+    desiredMumbleConnection=undefined;
+    mumbleRestartAttempts=0;
+    if(mumbleRestartTimer)clearTimeout(mumbleRestartTimer);
+    mumbleRestartTimer=undefined;
+    mumbleLastFailure=child?'连接已被客户端取消':mumbleLastFailure;
+    publishMumbleState({state:'disconnected'});
+  }
+  if (child && !child.killed) child.kill();
+}
+
+function scheduleMumbleRestart() {
+  const connection=desiredMumbleConnection;
+  if(appQuitting||!connection||mumbleRestartTimer)return;
+  const attempt=++mumbleRestartAttempts;
+  const delay=Math.min(15_000,750*2**Math.min(attempt-1,5));
+  publishMumbleState({state:'reconnecting',attempt,message:`语音核心已退出，${Math.ceil(delay/1000)} 秒后自动恢复`});
+  mumbleRestartTimer=setTimeout(()=>{
+    mumbleRestartTimer=undefined;
+    const desired=desiredMumbleConnection;
+    if(appQuitting||!desired||!sameMumbleConnection(desired,connection))return;
+    void connectMumble({...desired},true).catch(error=>{
+      mumbleLastFailure=error instanceof Error?error.message:String(error);
+      publishMumbleState({state:'error',attempt:mumbleRestartAttempts,message:mumbleLastFailure});
+      scheduleMumbleRestart();
+    });
+  },delay);
+  mumbleRestartTimer.unref();
+}
+
+function exitCodeDescription(code:number|null,signal:NodeJS.Signals|null) {
+  if(code!==null)return `${code} / 0x${(code>>>0).toString(16).toUpperCase().padStart(8,'0')}`;
+  return signal?`信号 ${signal}`:'未提供退出码';
+}
+
+function mumbleCommandOnce(command:string, timeoutMs=2500) {
+  return new Promise<string>((resolve,reject) => {
+    const socket=net.createConnection(mumblePipe); let buffer=''; let settled=false;
+    const finish=(error?:Error,value?:string)=>{if(settled)return;settled=true;clearTimeout(timer);socket.destroy();error?reject(error):resolve(value??'');};
+    const timer=setTimeout(()=>finish(new Error('Mumble 原生音频核心响应超时')),timeoutMs);
+    socket.setEncoding('utf8');
+    socket.once('connect',()=>socket.write(`${command}\n`));
+    socket.on('data',(chunk:string)=>{buffer+=chunk;const newline=buffer.indexOf('\n');if(newline>=0)finish(undefined,buffer.slice(0,newline).trim())});
+    socket.once('error',(error)=>finish(error));
+    socket.once('close',()=>{if(!settled&&buffer.trim())finish(undefined,buffer.trim())});
+  });
+}
+
+let mumbleCommandQueue:Promise<unknown>=Promise.resolve();
+function mumbleCommand(command:string,timeoutMs=2500) {
+  const run=async()=>{
+    let lastError:unknown;
+    for(let attempt=0;attempt<8;attempt++){
+      try{return await mumbleCommandOnce(command,timeoutMs)}catch(error){
+        lastError=error;
+        const code=(error as NodeJS.ErrnoException)?.code;
+        if(code!=='ENOENT'&&code!=='EBUSY'&&code!=='ECONNREFUSED')throw error;
+        await new Promise(resolve=>setTimeout(resolve,35+attempt*15));
+      }
+    }
+    throw lastError;
+  };
+  const result=mumbleCommandQueue.then(run,run);
+  mumbleCommandQueue=result.then(()=>undefined,()=>undefined);
+  return result;
+}
+
+async function waitForMumbleBridge(child:ChildProcess) {
+  const deadline=Date.now()+15_000; let lastError:unknown;
+  while(Date.now()<deadline){
+    if(mumbleProcess!==child)throw new Error(`Mumble 原生音频核心启动失败：${mumbleLastFailure||'连接已被替换'}`);
+    if(child.exitCode!==null)throw new Error(`Mumble 原生音频核心启动失败：${mumbleLastFailure||`进程退出 ${exitCodeDescription(child.exitCode,child.signalCode)}`}`);
+    try { if(await mumbleCommand('PING',700)==='OK PONG') return; } catch(error){lastError=error;}
+    await new Promise(resolve=>setTimeout(resolve,250));
+  }
+  throw lastError instanceof Error?lastError:new Error('无法连接 Mumble 原生音频核心');
+}
+
+async function activateMumbleAudio() {
+  for(const command of ['CONFIGURE',`DEAF ${mumbleDeafened?1:0}`,`MUTE ${mumbleMuted?1:0}`]){
+    const result=await mumbleCommand(command);
+    if(!result.startsWith('OK'))throw new Error(`恢复 Mumble 音频失败：${result}`);
+  }
+  return mumbleCommand('STATUS');
+}
+
+async function connectMumble(connection:MumbleConnection,recovering=false) {
+  if(!/^[a-zA-Z0-9.-]{1,253}$/.test(connection.host)||!Number.isInteger(connection.port)||connection.port<1||connection.port>65535) throw new Error('Mumble 服务器地址无效');
+  if(!connection.username||connection.username.length>64||!connection.channelName||connection.channelName.length>128) throw new Error('Mumble 连接参数无效');
+  const identity=connectionIdentity(connection);
+  if(!recovering){
+    desiredMumbleConnection={...connection};
+    mumbleRestartAttempts=0;
+    mumbleMuted=false;
+    mumbleDeafened=false;
+    if(mumbleRestartTimer)clearTimeout(mumbleRestartTimer);
+    mumbleRestartTimer=undefined;
+    publishMumbleState({state:'connecting'});
+  }else if(!sameMumbleConnection(desiredMumbleConnection,connection)){
+    throw new Error('语音连接已被取消');
+  }else{
+    publishMumbleState({state:'reconnecting',attempt:mumbleRestartAttempts,message:'正在重新启动 Mumble 原生语音核心'});
+  }
+  if(mumbleProcess&&mumbleProcess.exitCode===null&&mumbleIdentity===identity){
+    const child=mumbleProcess;
+    await waitForMumbleBridge(child);
+    const deadline=Date.now()+6_000;let result='';
+    do {result=await mumbleCommand(`MOVE ${connection.channelName}`);if(result.startsWith('OK')){const status=await activateMumbleAudio();mumbleRestartAttempts=0;publishMumbleState({state:'connected'});return status}await new Promise(resolve=>setTimeout(resolve,300));} while(result.includes('channel-not-found')&&Date.now()<deadline);
+    throw new Error(`切换 Mumble 频道失败：${result}`);
+  }
+  stopMumble(false);
+  const directory=sidecarDirectory(); const executable=path.join(directory,'mumble.exe');
+  if(!existsSync(executable))throw new Error('安装包缺少 Mumble 原生音频核心');
+  const configDirectory=path.join(app.getPath('userData'),'mumble-native');
+  mkdirSync(configDirectory,{recursive:true});
+  const configFile=path.join(configDirectory,'echodeck-mumble.json');
+  let validConfig=false;
+  if(existsSync(configFile))try{validConfig=JSON.parse(readFileSync(configFile,'utf8'))?.settings_version===1}catch{}
+  if(!validConfig)writeFileSync(configFile,'{"settings_version":1}\n',{encoding:'utf8'});
+  const auth=`${encodeURIComponent(connection.username)}:${encodeURIComponent(connection.password)}`;
+  const url=`mumble://${auth}@${connection.host}:${connection.port}/${encodeURIComponent(connection.channelName)}?version=1.5.0`;
+  mumbleLastFailure='';
+  const child=spawn(executable,['--config',configFile,'--hidden','--multiple','--no-window-states','--skip-settings-backup-prompt',url],{cwd:directory,windowsHide:true,stdio:'ignore',env:{...process.env,POIO_MUMBLE_PIPE_SUFFIX:mumblePipeSuffix}});
+  mumbleProcess=child;
+  mumbleIdentity=identity;
+  child.once('error',(error)=>{mumbleLastFailure=`无法创建进程（${error.message}）`});
+  child.once('exit',(code,signal)=>{
+    if(mumbleProcess===child){
+      mumbleLastFailure=`进程退出 ${exitCodeDescription(code,signal)}。若错误码为 0xC0000135，请检查安全软件是否隔离了安装目录中的 DLL`;
+      mumbleProcess=null;mumbleIdentity='';
+      scheduleMumbleRestart();
+    }
+  });
+  try{
+    await waitForMumbleBridge(child);
+    const deadline=Date.now()+15_000;
+    while(Date.now()<deadline){const status=await mumbleCommand('STATUS');if(/connected=1/.test(status)){const active=await activateMumbleAudio();mumbleRestartAttempts=0;publishMumbleState({state:'connected'});return active}await new Promise(resolve=>setTimeout(resolve,300));}
+    throw new Error('Mumble 服务器连接超时');
+  }catch(error){
+    if(mumbleProcess===child)stopMumble(false);
+    if(recovering)scheduleMumbleRestart();
+    else if(sameMumbleConnection(desiredMumbleConnection,connection))publishMumbleState({state:'error',message:error instanceof Error?error.message:String(error)});
+    throw error;
+  }
+}
+
+async function getMumbleAudioDevices():Promise<MumbleAudioDevices> {
+  if(!mumbleProcess||mumbleProcess.exitCode!==null)throw new Error('请先加入一个语音频道，再选择输入和输出设备');
+  const result=await mumbleCommand('DEVICES',5000);
+  if(!result.startsWith('OK '))throw new Error(`读取音频设备失败：${result}`);
+  const devices=JSON.parse(result.slice(3)) as MumbleAudioDevices;
+  if(!Array.isArray(devices.inputs)||!Array.isArray(devices.outputs))throw new Error('Mumble 返回了无效的设备列表');
+  return devices;
+}
+
+async function getMumbleInputLevel() {
+  if(!mumbleProcess||mumbleProcess.exitCode!==null)return 0;
+  const result=await mumbleCommand('LEVEL',1000);
+  const match=/^OK (\d+)$/.exec(result);
+  if(!match)throw new Error(`读取麦克风音量失败：${result}`);
+  return Math.min(1,Math.max(0,Number(match[1])/1000));
+}
+
+async function getMumbleVolumes() {
+  if(!mumbleProcess||mumbleProcess.exitCode!==null)throw new Error('请先加入语音频道');
+  const result=await mumbleCommand('VOLUMES',1500);
+  const match=/^OK input=(\d+) output=(\d+)$/.exec(result);
+  if(!match)throw new Error(`读取音量失败：${result}`);
+  return {input:Number(match[1]),output:Number(match[2])};
+}
+
+async function setMumbleVolume(kind:'input'|'output',value:number) {
+  const maximum=kind==='input'?100:200;
+  if(!Number.isInteger(value)||value<0||value>maximum)throw new Error('无效的音量值');
+  const result=await mumbleCommand(`SET_VOLUME ${kind} ${value}`,2500);
+  if(!result.startsWith('OK'))throw new Error(`设置音量失败：${result}`);
+  return getMumbleVolumes();
+}
+
+async function getMumbleUsers():Promise<MumbleUserVolume[]> {
+  if(!mumbleProcess||mumbleProcess.exitCode!==null)return [];
+  const result=await mumbleCommand('USERS',2500);
+  if(!result.startsWith('OK '))throw new Error(`读取频道用户失败：${result}`);
+  const users=JSON.parse(result.slice(3)) as MumbleUserVolume[];
+  if(!Array.isArray(users)||users.some(item=>typeof item?.username!=='string'||!Number.isInteger(item?.volume)||(item?.talking!==undefined&&typeof item.talking!=='boolean')))throw new Error('Mumble 返回了无效的用户状态列表');
+  return users.filter(item=>item.volume>=0&&item.volume<=200).map(item=>({...item,talking:item.talking===true}));
+}
+
+async function setMumbleUserVolume(username:string,value:number) {
+  if(!/^ed_[a-zA-Z0-9_-]{1,80}$/.test(username))throw new Error('无效的频道用户');
+  if(!Number.isInteger(value)||value<0||value>200)throw new Error('无效的用户音量值');
+  if(!mumbleProcess||mumbleProcess.exitCode!==null)throw new Error('请先加入语音频道');
+  let result='';
+  for(let attempt=0;attempt<10;attempt++){
+    result=await mumbleCommand(`SET_USER_VOLUME ${username} ${value}`,2500);
+    if(result.startsWith('OK'))return value;
+    if(!result.includes('user-volume--2'))break;
+    await new Promise(resolve=>setTimeout(resolve,150+attempt*50));
+  }
+  throw new Error(`设置用户音量失败：${result}`);
+}
+
+async function setMumbleAudioDevice(kind:'input'|'output',index:number) {
+  if(!Number.isInteger(index)||index<0)throw new Error('无效的音频设备');
+  if(!mumbleProcess||mumbleProcess.exitCode!==null)throw new Error('请先加入一个语音频道');
+  const result=await mumbleCommand(`${kind==='input'?'SET_INPUT':'SET_OUTPUT'} ${index}`,10_000);
+  if(!result.startsWith('OK'))throw new Error(`切换音频设备失败：${result}`);
+  return getMumbleAudioDevices();
+}
+
+async function buildDiagnostics() {
+  const running=Boolean(mumbleProcess&&mumbleProcess.exitCode===null);
+  let mumbleStatus=running?'响应失败':'未运行';
+  let audioDevices='未连接语音频道';
+  if(running){
+    try{mumbleStatus=await mumbleCommand('STATUS',1800)}catch(error){mumbleStatus=error instanceof Error?error.message:String(error)}
+    try{
+      const devices=await getMumbleAudioDevices();
+      const input=devices.inputs.find(device=>device.selected)?.name??'未选择';
+      const output=devices.outputs.find(device=>device.selected)?.name??'未选择';
+      audioDevices=`输入 ${devices.inputBackend??'未知'} / ${input}; 输出 ${devices.outputBackend??'未知'} / ${output}`;
+    }catch(error){audioDevices=error instanceof Error?error.message:String(error)}
+  }
+  const update=`${appUpdateStatus.state}${appUpdateStatus.version?` ${appUpdateStatus.version}`:''}${appUpdateStatus.percent!==undefined?` ${appUpdateStatus.percent}%`:''}${appUpdateStatus.message?` / ${appUpdateStatus.message}`:''}`;
+  return [
+    'POIO 诊断信息',
+    `生成时间: ${new Date().toISOString()}`,
+    `应用版本: ${app.getVersion()} (${app.isPackaged?'安装版':'开发版'})`,
+    `运行环境: Electron ${process.versions.electron} / Chromium ${process.versions.chrome} / Node ${process.versions.node}`,
+    `系统: Windows ${os.release()} ${os.arch()} / ${Math.round(os.totalmem()/1024/1024/1024)} GB RAM`,
+    `在线更新: ${update}`,
+    `Mumble 原生核心: ${running?'运行中':'未运行'}${mumbleLastFailure?` / 最近状态 ${mumbleLastFailure}`:''}`,
+    `Mumble PID: ${mumbleProcess?.pid??'无'}`,
+    `Mumble 自动恢复: ${mumbleRuntimeState.state}${mumbleRuntimeState.attempt?` / 第 ${mumbleRuntimeState.attempt} 次`:''}${mumbleRuntimeState.message?` / ${mumbleRuntimeState.message}`:''}`,
+    `Mumble 状态: ${mumbleStatus}`,
+    `音频设备: ${audioDevices}`
+  ].join('\n');
+}
+
+function publishUpdateStatus(status:AppUpdateStatus) {
+  appUpdateStatus=status;
+  sendToMainWindow('update:status',status);
+  return status;
+}
+
+async function checkForAppUpdate() {
+  lastAppUpdateCheck=Date.now();
+  if(!app.isPackaged)return publishUpdateStatus({state:'development',message:'开发模式不检查更新'});
+  publishUpdateStatus({state:'checking'});
+  try{await autoUpdater.checkForUpdates();return appUpdateStatus}catch(error){return publishUpdateStatus({state:'error',message:error instanceof Error?error.message:'检查更新失败'})}
+}
+
+function initializeAutoUpdates() {
+  if(!app.isPackaged){publishUpdateStatus({state:'development',message:'开发模式不检查更新'});return}
+  autoUpdater.autoDownload=true;
+  autoUpdater.autoInstallOnAppQuit=true;
+  autoUpdater.allowPrerelease=false;
+  autoUpdater.setFeedURL({provider:'generic',url:'https://115.159.222.29/echodeck/releases/'});
+  autoUpdater.on('checking-for-update',()=>publishUpdateStatus({state:'checking'}));
+  autoUpdater.on('update-available',info=>publishUpdateStatus({state:'available',version:info.version}));
+  autoUpdater.on('update-not-available',info=>publishUpdateStatus({state:'up-to-date',version:info.version}));
+  autoUpdater.on('download-progress',progress=>publishUpdateStatus({state:'downloading',percent:Math.round(progress.percent)}));
+  autoUpdater.on('update-downloaded',info=>publishUpdateStatus({state:'downloaded',version:info.version,percent:100}));
+  autoUpdater.on('error',error=>publishUpdateStatus({state:'error',message:error.message}));
+  const maybeCheck=()=>{
+    if(Date.now()-lastAppUpdateCheck<5*60_000||['checking','available','downloading','downloaded'].includes(appUpdateStatus.state))return;
+    void checkForAppUpdate();
+  };
+  setTimeout(maybeCheck,5000);
+  setInterval(maybeCheck,10*60_000);
+  mainWindow?.on('focus',maybeCheck);
+}
+
+function createSplash() {
+  splashWindow = new BrowserWindow({
+    width: 420,
+    height: 260,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    resizable: false,
+    show: false,
+    icon: appIcon,
+    webPreferences: { sandbox: true }
+  });
+  const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+    *{box-sizing:border-box}body{margin:0;background:transparent;font-family:Inter,"Microsoft YaHei",sans-serif;color:#fff}
+    .card{width:420px;height:260px;border-radius:26px;overflow:hidden;background:radial-gradient(circle at 28% 18%,#6646ff 0,#242045 30%,#11131b 72%);border:1px solid rgba(255,255,255,.13);box-shadow:0 28px 80px #05060dcc;display:grid;place-items:center}
+    .mark{position:relative;width:92px;height:74px;border-radius:22px;background:linear-gradient(145deg,#8267ff,#5c3df4);display:grid;place-items:center;box-shadow:0 18px 38px #6c4dff55;animation:float 1.8s ease-in-out infinite;color:#fff;font-size:21px;font-weight:1000;font-style:italic;letter-spacing:-3px;transform:skew(5deg);text-shadow:0 3px 5px #281681}
+    h1{font-size:26px;letter-spacing:.6px;margin:14px 0 4px}.sub{font-size:12px;color:#abaec2;letter-spacing:2px}
+    .track{width:170px;height:3px;background:#ffffff18;border-radius:9px;margin:24px auto 0;overflow:hidden}.bar{height:100%;width:42%;background:linear-gradient(90deg,#7c60ff,#39d7c4);border-radius:9px;animation:load 1.2s ease-in-out infinite}
+    @keyframes load{0%{transform:translateX(-110%)}100%{transform:translateX(350%)}}@keyframes float{50%{transform:translateY(-6px) rotate(-2deg)}}
+  </style></head><body><div class="card"><div><div class="mark">POIO</div><h1>POIO</h1><div class="sub">VOICE · SHARE · PLAY</div><div class="track"><div class="bar"></div></div></div></div></body></html>`;
+  void splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  splashWindow.once('ready-to-show', () => splashWindow?.show());
+}
+
+async function createMainWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    minWidth: 1080,
+    minHeight: 700,
+    frame: false,
+    show: false,
+    backgroundColor: '#101118',
+    titleBarStyle: 'hidden',
+    icon: appIcon,
+    webPreferences: {
+      preload: path.join(dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devUrl) await mainWindow.loadURL(devUrl);
+  else await mainWindow.loadFile(path.join(dirname, '../dist/index.html'));
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/.test(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  mainWindow.once('ready-to-show', () => {
+    setTimeout(() => {
+      splashWindow?.close();
+      splashWindow = null;
+      mainWindow?.show();
+    }, 900);
+  });
+  mainWindow.once('closed',()=>{mainWindow=null});
+}
+
+app.setAppUserModelId('com.poio.desktop');
+
+app.whenReady().then(async () => {
+  createSplash();
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
+    callback({ video: sources[0] });
+  }, { useSystemPicker: true });
+  ipcMain.handle('window:minimize', () => mainWindow?.minimize());
+  ipcMain.handle('window:maximize', () => mainWindow?.isMaximized() ? mainWindow.unmaximize() : mainWindow?.maximize());
+  ipcMain.handle('window:close', () => mainWindow?.close());
+  ipcMain.handle('desktop:sources', async () => {
+    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 360, height: 200 }, fetchWindowIcons: true });
+    return sources.map((source) => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL(), appIcon: source.appIcon?.toDataURL() }));
+  });
+  ipcMain.handle('desktop:capture', async () => {
+    const window=mainWindow;
+    if(!window||window.isDestroyed())throw new Error('POIO 窗口不可用');
+    const display=screen.getDisplayMatching(window.getBounds());
+    const wasVisible=window.isVisible();
+    try{
+      window.hide();
+      await new Promise(resolve=>setTimeout(resolve,180));
+      const width=Math.max(1,Math.round(display.size.width*display.scaleFactor));
+      const height=Math.max(1,Math.round(display.size.height*display.scaleFactor));
+      const sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize:{width,height}});
+      const source=sources.find(item=>item.display_id===String(display.id))??sources[0];
+      if(!source||source.thumbnail.isEmpty())throw new Error('无法截取当前屏幕');
+      const actual=source.thumbnail.getSize();
+      return {dataUrl:source.thumbnail.toDataURL(),width:actual.width,height:actual.height,displayName:source.name};
+    }finally{
+      if(wasVisible&&!window.isDestroyed()){window.show();window.focus()}
+    }
+  });
+  ipcMain.handle('mumble:connect', (_event, connection:MumbleConnection) => connectMumble(connection));
+  ipcMain.handle('mumble:state', () => mumbleRuntimeState);
+  ipcMain.handle('mumble:command', async (_event, command:string) => {
+    if(!/^(PING|STATUS|MUTE [01]|DEAF [01])$/.test(command))throw new Error('不允许的 Mumble 控制命令');
+    const result=await mumbleCommand(command); if(!result.startsWith('OK'))throw new Error(result);
+    if(command.startsWith('MUTE '))mumbleMuted=command.endsWith('1');
+    if(command.startsWith('DEAF '))mumbleDeafened=command.endsWith('1');
+    return result;
+  });
+  ipcMain.handle('mumble:disconnect', () => stopMumble());
+  ipcMain.handle('mumble:level', () => getMumbleInputLevel());
+  ipcMain.handle('mumble:volumes', () => getMumbleVolumes());
+  ipcMain.handle('mumble:set-volume', (_event,kind:'input'|'output',value:number) => setMumbleVolume(kind,value));
+  ipcMain.handle('mumble:users', () => getMumbleUsers());
+  ipcMain.handle('mumble:set-user-volume', (_event,username:string,value:number) => setMumbleUserVolume(username,value));
+  ipcMain.handle('mumble:devices', () => getMumbleAudioDevices());
+  ipcMain.handle('mumble:set-input', (_event,index:number) => setMumbleAudioDevice('input',index));
+  ipcMain.handle('mumble:set-output', (_event,index:number) => setMumbleAudioDevice('output',index));
+  ipcMain.handle('update:status', () => appUpdateStatus);
+  ipcMain.handle('update:check', () => checkForAppUpdate());
+  ipcMain.handle('update:install', () => { if(appUpdateStatus.state==='downloaded')autoUpdater.quitAndInstall(false,true); });
+  ipcMain.handle('diagnostics:get', () => buildDiagnostics());
+  await createMainWindow();
+  initializeAutoUpdates();
+});
+
+app.on('before-quit',()=>{appQuitting=true;stopMumble()});
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

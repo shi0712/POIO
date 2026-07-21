@@ -1,0 +1,734 @@
+diff --git a/plugins/CMakeLists.txt b/plugins/CMakeLists.txt
+index d170f627..07fdc032 100644
+--- a/plugins/CMakeLists.txt
++++ b/plugins/CMakeLists.txt
+@@ -15,6 +15,7 @@ set(AVAILABLE_PLUGINS "")
+ 
+ # Plugins available on all platforms
+ list(APPEND AVAILABLE_PLUGINS
++	"echodeckBridge"
+ 	"link"
+ )
+ 
+diff --git a/src/mumble/AudioInput.cpp b/src/mumble/AudioInput.cpp
+index a2265cbc..a2fdbb09 100644
+--- a/src/mumble/AudioInput.cpp
++++ b/src/mumble/AudioInput.cpp
+@@ -280,7 +280,8 @@ AudioInput::AudioInput()
+ 	pfMicInput = pfEchoInput = nullptr;
+ 
+ 	iBitrate    = 0;
+-	dPeakSignal = dPeakSpeaker = dPeakMic = dPeakCleanMic = 0.0;
++	dPeakSignal = dPeakSpeaker = 0.0;
++	dPeakMic = dPeakCleanMic = -96.0;
+ 
+ 	if (Global::get().uiSession) {
+ 		setMaxBandwidth(Global::get().iMaxBandwidth);
+diff --git a/src/mumble/PluginManager.cpp b/src/mumble/PluginManager.cpp
+index ad30270d..37a0411b 100644
+--- a/src/mumble/PluginManager.cpp
++++ b/src/mumble/PluginManager.cpp
+@@ -381,6 +381,20 @@ void PluginManager::rescanPlugins() {
+ 
+ 		it++;
+ 	}
++
++	// EchoDeck ships this local-control plugin next to its private Mumble
++	// executable. It has no network listener and must be available before the
++	// Electron shell tries to control mute/deafen/channel state. Loading it here
++	// also keeps the sidecar independent from a user's global Mumble settings.
++	for (auto pluginIt = m_pluginHashMap.constBegin(); pluginIt != m_pluginHashMap.constEnd(); ++pluginIt) {
++		const plugin_ptr_t &plugin = pluginIt.value();
++		if (QFileInfo(plugin->getFilePath()).baseName().compare(QLatin1String("echodeckBridge"), Qt::CaseInsensitive)
++			== 0
++			&& !plugin->isLoaded()) {
++			loadPlugin(plugin->getID());
++			break;
++		}
++	}
+ }
+ 
+ const_plugin_ptr_t PluginManager::getPlugin(plugin_id_t pluginID) const {
+diff --git a/src/mumble/main.cpp b/src/mumble/main.cpp
+index 232d7245..31cdd04c 100644
+--- a/src/mumble/main.cpp
++++ b/src/mumble/main.cpp
+@@ -56,7 +56,11 @@
+ #include <CLI/CLI.hpp>
+ 
+ #include <QLocale>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
+ #include <QScreen>
++#include <QThread>
+ #include <QtCore/QProcess>
+ #include <QtGui/QDesktopServices>
+ #include <QtWidgets/QMessageBox>
+@@ -91,6 +95,282 @@ void throw_exception(std::exception const &) {
+ 
+ using namespace mumble;
+ 
++#ifdef Q_OS_WIN
++namespace {
++QByteArray echoDeckAudioDevicesJson() {
++	QJsonObject result;
++	QJsonArray inputs;
++	QJsonArray outputs;
++
++	if (AudioInputRegistrar::qmNew) {
++		AudioInputRegistrar *registrar = AudioInputRegistrar::qmNew->value(AudioInputRegistrar::current, nullptr);
++		if (registrar) {
++			const QVariant selected = registrar->getDeviceChoice();
++			const QList< audioDevice > choices = registrar->getDeviceChoices();
++			for (int index = 0; index < choices.size(); ++index) {
++				const audioDevice &choice = choices.at(index);
++				inputs.append(QJsonObject{ { "index", index }, { "name", choice.first },
++										   { "selected", choice.second == selected } });
++			}
++			result.insert("inputBackend", registrar->name);
++		}
++	}
++
++	if (AudioOutputRegistrar::qmNew) {
++		AudioOutputRegistrar *registrar = AudioOutputRegistrar::qmNew->value(AudioOutputRegistrar::current, nullptr);
++		if (registrar) {
++			const QVariant selected = registrar->getDeviceChoice();
++			const QList< audioDevice > choices = registrar->getDeviceChoices();
++			for (int index = 0; index < choices.size(); ++index) {
++				const audioDevice &choice = choices.at(index);
++				outputs.append(QJsonObject{ { "index", index }, { "name", choice.first },
++											{ "selected", choice.second == selected } });
++			}
++			result.insert("outputBackend", registrar->name);
++		}
++	}
++
++	result.insert("inputs", inputs);
++	result.insert("outputs", outputs);
++	return QJsonDocument(result).toJson(QJsonDocument::Compact);
++}
++
++int echoDeckSetAudioDevice(int kind, int index) {
++	bool changed = false;
++	if (kind == 0 && AudioInputRegistrar::qmNew) {
++		AudioInputRegistrar *registrar = AudioInputRegistrar::qmNew->value(AudioInputRegistrar::current, nullptr);
++		if (!registrar) {
++			return -10;
++		}
++		const QList< audioDevice > choices = registrar->getDeviceChoices();
++		if (index < 0 || index >= choices.size()) {
++			return -11;
++		}
++		registrar->setDeviceChoice(choices.at(index).second, Global::get().s);
++		changed = true;
++	} else if (kind == 1 && AudioOutputRegistrar::qmNew) {
++		AudioOutputRegistrar *registrar = AudioOutputRegistrar::qmNew->value(AudioOutputRegistrar::current, nullptr);
++		if (!registrar) {
++			return -20;
++		}
++		const QList< audioDevice > choices = registrar->getDeviceChoices();
++		if (index < 0 || index >= choices.size()) {
++			return -21;
++		}
++		registrar->setDeviceChoice(choices.at(index).second, Global::get().s);
++		changed = true;
++	}
++
++	if (!changed) {
++		return -30;
++	}
++
++	Audio::stop();
++	Audio::start();
++	Global::get().s.save();
++	return 1;
++}
++
++QByteArray echoDeckUsersJson() {
++	QJsonArray users;
++	QReadLocker lock(&ClientUser::c_qrwlUsers);
++	for (ClientUser *user : ClientUser::c_qmUsers) {
++		if (!user || user->uiSession == Global::get().uiSession) {
++			continue;
++		}
++		users.append(QJsonObject{ { "username", user->qsName },
++								  { "volume", std::clamp(static_cast< int >(user->getLocalVolumeAdjustments() * 100.0f),
++															  0, 200) },
++								  { "talking", user->tsState != Settings::Passive
++												 && user->tsState != Settings::MutedTalking } });
++	}
++	return QJsonDocument(users).toJson(QJsonDocument::Compact);
++}
++
++int echoDeckSetUserVolume(const QString &username, int value) {
++	if (username.isEmpty() || value < 0 || value > 200) {
++		return -1;
++	}
++	ClientUser *matchedUser = nullptr;
++	{
++		QReadLocker lock(&ClientUser::c_qrwlUsers);
++		for (ClientUser *user : ClientUser::c_qmUsers) {
++			if (user && user->uiSession != Global::get().uiSession && user->qsName == username) {
++				matchedUser = user;
++				break;
++			}
++		}
++	}
++	if (!matchedUser) {
++		return -2;
++	}
++
++	matchedUser->setLocalVolumeAdjustment(value / 100.0f);
++	if (Global::get().db && !matchedUser->qsHash.isEmpty()) {
++		Global::get().db->setUserLocalVolume(matchedUser->qsHash, matchedUser->getLocalVolumeAdjustments());
++	}
++	return 1;
++}
++} // namespace
++
++extern "C" __declspec(dllexport) const char *EchoDeck_GetAudioDevices() {
++	static thread_local QByteArray response;
++	QByteArray value;
++	QCoreApplication *application = QCoreApplication::instance();
++	if (!application) {
++		response = R"({"inputs":[],"outputs":[],"error":"application-not-ready"})";
++		return response.constData();
++	}
++	if (QThread::currentThread() == application->thread()) {
++		value = echoDeckAudioDevicesJson();
++	} else {
++		QMetaObject::invokeMethod(application, [&value]() { value = echoDeckAudioDevicesJson(); },
++							  Qt::BlockingQueuedConnection);
++	}
++	response = value;
++	return response.constData();
++}
++
++extern "C" __declspec(dllexport) int EchoDeck_SetAudioDevice(int kind, int index) {
++	QCoreApplication *application = QCoreApplication::instance();
++	if (!application) {
++		return -40;
++	}
++	if (QThread::currentThread() == application->thread()) {
++		return echoDeckSetAudioDevice(kind, index);
++	}
++	const bool invoked = QMetaObject::invokeMethod(application, [kind, index]() { echoDeckSetAudioDevice(kind, index); },
++										 Qt::QueuedConnection);
++	return invoked ? 1 : -41;
++}
++
++extern "C" __declspec(dllexport) int EchoDeck_GetInputLevel() {
++	const auto audioInput = Global::get().ai;
++	if (!audioInput) {
++		return 0;
++	}
++	const float normalized = std::clamp((60.0f + audioInput->dPeakMic) / 60.0f, 0.0f, 1.0f);
++	return static_cast< int >(normalized * 1000.0f);
++}
++
++extern "C" __declspec(dllexport) int EchoDeck_ConfigureRuntime() {
++	QCoreApplication *application = QCoreApplication::instance();
++	if (!application) {
++		return -40;
++	}
++	const auto configure = []() {
++		// Voice activation prevents speaker leakage and room noise from being
++		// transmitted continuously. Multichannel Speex AEC receives WASAPI's
++		// speaker readback and removes the remote voices before VAD runs.
++		Global::get().s.atTransmit       = Settings::VAD;
++		Global::get().s.vsVAD            = Settings::SignalToNoise;
++		Global::get().s.fVADmin          = 0.35f;
++		Global::get().s.fVADmax          = 0.55f;
++		Global::get().s.iVoiceHold       = 30;
++		Global::get().s.echoOption       = EchoCancelOptionID::SPEEX_MULTICHANNEL;
++		Global::get().s.noiseCancelMode  = Settings::NoiseCancelBoth;
++		Global::get().s.iSpeexNoiseCancelStrength = -35;
++		Global::get().s.audioCueEnabledPTT = false;
++		Global::get().s.audioCueEnabledVAD = false;
++		// POIO owns the mute UX. The stock Mumble mute cue can otherwise open a
++		// native confirmation dialog the first time speech is detected while
++		// muted, even though Mumble itself is running hidden.
++		Global::get().s.bTxMuteCue      = false;
++		Global::get().s.muteCueShown    = true;
++		Global::get().s.bShowTalkingUI = false;
++		for (auto iterator = Global::get().s.qmMessages.begin(); iterator != Global::get().s.qmMessages.end(); ++iterator) {
++			iterator.value() = Settings::LogNone;
++		}
++		if (Global::get().ai) {
++			Global::get().ai->bResetProcessor = true;
++		}
++		Global::get().s.save();
++	};
++	if (QThread::currentThread() == application->thread()) {
++		configure();
++		return 1;
++	}
++	const bool invoked = QMetaObject::invokeMethod(application, configure, Qt::BlockingQueuedConnection);
++	return invoked ? 1 : -41;
++}
++
++extern "C" __declspec(dllexport) int EchoDeck_GetVolume(int kind) {
++	if (kind == 0) {
++		return std::clamp(static_cast< int >(((20000 - Global::get().s.iMinLoudness) * 100.0f) / 19500.0f), 0,
++						  100);
++	}
++	if (kind == 1) {
++		return std::clamp(static_cast< int >(Global::get().s.fVolume * 100.0f), 0, 200);
++	}
++	return -1;
++}
++
++extern "C" __declspec(dllexport) int EchoDeck_SetVolume(int kind, int value) {
++	QCoreApplication *application = QCoreApplication::instance();
++	if (!application) {
++		return -40;
++	}
++	const auto update = [kind, value]() {
++		if (kind == 0 && value >= 0 && value <= 100) {
++			Global::get().s.iMinLoudness = 20000 - static_cast< int >((value / 100.0f) * 19500.0f);
++			if (Global::get().ai) {
++				Global::get().ai->bResetProcessor = true;
++			}
++		} else if (kind == 1 && value >= 0 && value <= 200) {
++			Global::get().s.fVolume = value / 100.0f;
++		} else {
++			return false;
++		}
++		Global::get().s.save();
++		return true;
++	};
++	if (QThread::currentThread() == application->thread()) {
++		return update() ? 1 : -1;
++	}
++	bool changed = false;
++	const bool invoked = QMetaObject::invokeMethod(application, [&changed, update]() { changed = update(); },
++											 Qt::BlockingQueuedConnection);
++	return invoked && changed ? 1 : -41;
++}
++
++extern "C" __declspec(dllexport) const char *EchoDeck_GetUsers() {
++	static thread_local QByteArray response;
++	QByteArray value;
++	QCoreApplication *application = QCoreApplication::instance();
++	if (!application) {
++		response = "[]";
++		return response.constData();
++	}
++	if (QThread::currentThread() == application->thread()) {
++		value = echoDeckUsersJson();
++	} else {
++		QMetaObject::invokeMethod(application, [&value]() { value = echoDeckUsersJson(); },
++							  Qt::BlockingQueuedConnection);
++	}
++	response = value;
++	return response.constData();
++}
++
++extern "C" __declspec(dllexport) int EchoDeck_SetUserVolume(const char *username, int value) {
++	if (!username) {
++		return -1;
++	}
++	QCoreApplication *application = QCoreApplication::instance();
++	if (!application) {
++		return -40;
++	}
++	const QString userName = QString::fromUtf8(username);
++	if (QThread::currentThread() == application->thread()) {
++		return echoDeckSetUserVolume(userName, value);
++	}
++	int result = -41;
++	const bool invoked = QMetaObject::invokeMethod(
++		application, [&result, userName, value]() { result = echoDeckSetUserVolume(userName, value); },
++		Qt::BlockingQueuedConnection);
++	return invoked ? result : -41;
++}
++#endif
++
+ extern void os_init();
+ extern char *os_lang;
+ 
+@@ -823,10 +1103,15 @@ int main(int argc, char **argv) {
+ 
+ 	a.setQuitOnLastWindowClosed(false);
+ 
+-	if (!Global::get().s.audioWizardShown) {
++	if (!Global::get().s.audioWizardShown && !options.startHiddenInTray) {
+ 		auto wizard = std::make_unique< AudioWizard >(Global::get().mw);
+ 		wizard->exec();
+ 
++		Global::get().s.audioWizardShown = true;
++	} else if (options.startHiddenInTray) {
++		// The private EchoDeck sidecar is controlled by Electron and must never
++		// block on Mumble's first-run modal dialog. Mumble's safe default VAD and
++		// Windows default audio devices remain in effect.
+ 		Global::get().s.audioWizardShown = true;
+ 	}
+ 
+@@ -838,17 +1123,17 @@ int main(int argc, char **argv) {
+ 			if (CertWizard::validateCert(kp))
+ 				Global::get().s.kpCertificate = kp;
+ 		}
+-		if (!CertWizard::validateCert(Global::get().s.kpCertificate)) {
++		if (!CertWizard::validateCert(Global::get().s.kpCertificate) && !options.startHiddenInTray) {
+ 			CertWizard *cw = new CertWizard(Global::get().mw);
+ 			cw->exec();
+ 			delete cw;
++		}
+ 
+-			if (!CertWizard::validateCert(Global::get().s.kpCertificate)) {
+-				Global::get().s.kpCertificate = CertWizard::generateNewCert();
+-				if (qf.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Unbuffered)) {
+-					qf.write(CertWizard::exportCert(Global::get().s.kpCertificate));
+-					qf.close();
+-				}
++		if (!CertWizard::validateCert(Global::get().s.kpCertificate)) {
++			Global::get().s.kpCertificate = CertWizard::generateNewCert();
++			if (qf.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Unbuffered)) {
++				qf.write(CertWizard::exportCert(Global::get().s.kpCertificate));
++				qf.close();
+ 			}
+ 		}
+ 	}
+diff --git a/plugins/echodeckBridge/CMakeLists.txt b/plugins/echodeckBridge/CMakeLists.txt
+new file mode 100644
+index 00000000..2fa73362
+--- /dev/null
++++ b/plugins/echodeckBridge/CMakeLists.txt
+@@ -0,0 +1,6 @@
++# EchoDeck integration plugin. Built against Mumble's native plugin API.
++add_library(echodeckBridge SHARED "echodeckBridge.cpp")
++
++if(WIN32)
++	target_link_libraries(echodeckBridge PRIVATE advapi32.lib)
++endif()
+diff --git a/plugins/echodeckBridge/echodeckBridge.cpp b/plugins/echodeckBridge/echodeckBridge.cpp
+new file mode 100644
+index 00000000..c09cc178
+--- /dev/null
++++ b/plugins/echodeckBridge/echodeckBridge.cpp
+@@ -0,0 +1,324 @@
++// EchoDeck control bridge for the native Mumble client.
++// Uses Mumble's plugin API and a local Windows named pipe. No network listener is created.
++#include "../MumblePlugin.h"
++
++#include <atomic>
++#include <cstring>
++#include <string>
++#include <thread>
++
++#ifdef OS_WINDOWS
++#	include <windows.h>
++#endif
++
++namespace {
++MumbleAPI g_api{};
++mumble_plugin_id_t g_pluginID{};
++std::atomic_bool g_running{ false };
++std::thread g_pipeThread;
++
++#ifdef OS_WINDOWS
++std::wstring pipeName() {
++	wchar_t suffix[64]{};
++	const DWORD length = GetEnvironmentVariableW(L"POIO_MUMBLE_PIPE_SUFFIX", suffix, 64);
++	std::wstring name  = LR"(\\.\pipe\EchoDeckMumble)";
++	if (length > 0 && length < 64) {
++		bool valid = true;
++		for (DWORD index = 0; index < length; ++index) {
++			const wchar_t character = suffix[index];
++			if (!((character >= L'a' && character <= L'z') || (character >= L'A' && character <= L'Z')
++				  || (character >= L'0' && character <= L'9') || character == L'-' || character == L'_')) {
++				valid = false;
++				break;
++			}
++		}
++		if (valid) {
++			name += L'-';
++			name.append(suffix, length);
++		}
++	}
++	return name;
++}
++
++using GetAudioDevicesFn = const char *(*)();
++using SetAudioDeviceFn  = int (*)(int, int);
++using GetInputLevelFn   = int (*)();
++using GetVolumeFn       = int (*)(int);
++using SetVolumeFn       = int (*)(int, int);
++using GetUsersFn        = const char *(*)();
++using SetUserVolumeFn   = int (*)(const char *, int);
++using ConfigureRuntimeFn = int (*)();
++
++GetAudioDevicesFn getAudioDevicesFunction() {
++	static GetAudioDevicesFn function = []() {
++		const HMODULE executable = GetModuleHandleW(nullptr);
++		return executable ? reinterpret_cast< GetAudioDevicesFn >(GetProcAddress(executable, "EchoDeck_GetAudioDevices"))
++						  : nullptr;
++	}();
++	return function;
++}
++
++SetAudioDeviceFn setAudioDeviceFunction() {
++	static SetAudioDeviceFn function = []() {
++		const HMODULE executable = GetModuleHandleW(nullptr);
++		return executable ? reinterpret_cast< SetAudioDeviceFn >(GetProcAddress(executable, "EchoDeck_SetAudioDevice"))
++						  : nullptr;
++	}();
++	return function;
++}
++
++GetInputLevelFn getInputLevelFunction() {
++	static GetInputLevelFn function = []() {
++		const HMODULE executable = GetModuleHandleW(nullptr);
++		return executable ? reinterpret_cast< GetInputLevelFn >(GetProcAddress(executable, "EchoDeck_GetInputLevel"))
++						  : nullptr;
++	}();
++	return function;
++}
++
++GetVolumeFn getVolumeFunction() {
++	static GetVolumeFn function = []() {
++		const HMODULE executable = GetModuleHandleW(nullptr);
++		return executable ? reinterpret_cast< GetVolumeFn >(GetProcAddress(executable, "EchoDeck_GetVolume")) : nullptr;
++	}();
++	return function;
++}
++
++SetVolumeFn setVolumeFunction() {
++	static SetVolumeFn function = []() {
++		const HMODULE executable = GetModuleHandleW(nullptr);
++		return executable ? reinterpret_cast< SetVolumeFn >(GetProcAddress(executable, "EchoDeck_SetVolume")) : nullptr;
++	}();
++	return function;
++}
++
++GetUsersFn getUsersFunction() {
++	static GetUsersFn function = []() {
++		const HMODULE executable = GetModuleHandleW(nullptr);
++		return executable ? reinterpret_cast< GetUsersFn >(GetProcAddress(executable, "EchoDeck_GetUsers")) : nullptr;
++	}();
++	return function;
++}
++
++SetUserVolumeFn setUserVolumeFunction() {
++	static SetUserVolumeFn function = []() {
++		const HMODULE executable = GetModuleHandleW(nullptr);
++		return executable
++				   ? reinterpret_cast< SetUserVolumeFn >(GetProcAddress(executable, "EchoDeck_SetUserVolume"))
++				   : nullptr;
++	}();
++	return function;
++}
++
++ConfigureRuntimeFn configureRuntimeFunction() {
++	static ConfigureRuntimeFn function = []() {
++		const HMODULE executable = GetModuleHandleW(nullptr);
++		return executable
++				   ? reinterpret_cast< ConfigureRuntimeFn >(GetProcAddress(executable, "EchoDeck_ConfigureRuntime"))
++				   : nullptr;
++	}();
++	return function;
++}
++#endif
++
++MumbleStringWrapper staticString(const char *value) {
++	return { value, std::strlen(value), false };
++}
++
++std::string statusName(mumble_error_t status) {
++	return status == MUMBLE_STATUS_OK ? "OK" : "ERROR " + std::to_string(static_cast< int >(status));
++}
++
++std::string executeCommand(const std::string &line) {
++	if (line == "PING") {
++		return "OK PONG";
++	}
++	if (line == "STATUS") {
++		bool muted = false;
++		bool deafened = false;
++		mumble_connection_t connection{};
++		const auto connectionStatus = g_api.getActiveServerConnection(g_pluginID, &connection);
++		const auto muteStatus = g_api.isLocalUserMuted(g_pluginID, &muted);
++		const auto deafStatus = g_api.isLocalUserDeafened(g_pluginID, &deafened);
++		return "OK connected=" + std::to_string(connectionStatus == MUMBLE_STATUS_OK)
++			   + " muted=" + std::to_string(muteStatus == MUMBLE_STATUS_OK && muted)
++			   + " deafened=" + std::to_string(deafStatus == MUMBLE_STATUS_OK && deafened);
++	}
++	if (line.rfind("MUTE ", 0) == 0) {
++		return statusName(g_api.requestLocalUserMute(g_pluginID, line.substr(5) == "1"));
++	}
++	if (line.rfind("DEAF ", 0) == 0) {
++		return statusName(g_api.requestLocalUserDeaf(g_pluginID, line.substr(5) == "1"));
++	}
++#ifdef OS_WINDOWS
++	if (line == "CONFIGURE") {
++		const auto function = configureRuntimeFunction();
++		if (!function) {
++			return "ERROR native-configure-api-unavailable";
++		}
++		const int result = function();
++		return result == 1 ? "OK" : "ERROR configure-" + std::to_string(result);
++	}
++	if (line == "LEVEL") {
++		const auto function = getInputLevelFunction();
++		return function ? "OK " + std::to_string(function()) : "ERROR native-level-api-unavailable";
++	}
++	if (line == "VOLUMES") {
++		const auto function = getVolumeFunction();
++		return function ? "OK input=" + std::to_string(function(0)) + " output=" + std::to_string(function(1))
++						: "ERROR native-volume-api-unavailable";
++	}
++	if (line.rfind("SET_VOLUME ", 0) == 0) {
++		const auto function = setVolumeFunction();
++		if (!function) {
++			return "ERROR native-volume-api-unavailable";
++		}
++		try {
++			const auto separator = line.find(' ', 11);
++			const std::string kind = line.substr(11, separator - 11);
++			const int value        = std::stoi(line.substr(separator + 1));
++			const int result       = function(kind == "input" ? 0 : kind == "output" ? 1 : -1, value);
++			return result == 1 ? "OK" : "ERROR invalid-volume-" + std::to_string(result);
++		} catch (...) {
++			return "ERROR invalid-volume";
++		}
++	}
++	if (line == "USERS") {
++		const auto function = getUsersFunction();
++		if (!function) {
++			return "ERROR native-users-api-unavailable";
++		}
++		const char *json = function();
++		return json ? "OK " + std::string(json) : "ERROR user-enumeration-failed";
++	}
++	if (line.rfind("SET_USER_VOLUME ", 0) == 0) {
++		const auto function = setUserVolumeFunction();
++		if (!function) {
++			return "ERROR native-users-api-unavailable";
++		}
++		try {
++			const auto separator = line.find(' ', 16);
++			if (separator == std::string::npos) {
++				return "ERROR invalid-user-volume";
++			}
++			const std::string username = line.substr(16, separator - 16);
++			const int value            = std::stoi(line.substr(separator + 1));
++			const int result           = function(username.c_str(), value);
++			return result == 1 ? "OK" : "ERROR user-volume-" + std::to_string(result);
++		} catch (...) {
++			return "ERROR invalid-user-volume";
++		}
++	}
++	if (line == "DEVICES") {
++		const auto function = getAudioDevicesFunction();
++		if (!function) {
++			return "ERROR native-audio-api-unavailable";
++		}
++		const char *json = function();
++		return json ? "OK " + std::string(json) : "ERROR device-enumeration-failed";
++	}
++	if (line.rfind("SET_INPUT ", 0) == 0 || line.rfind("SET_OUTPUT ", 0) == 0) {
++		const bool input = line.rfind("SET_INPUT ", 0) == 0;
++		const auto function = setAudioDeviceFunction();
++		if (!function) {
++			return "ERROR native-audio-api-unavailable";
++		}
++		try {
++			const int index = std::stoi(line.substr(input ? 10 : 11));
++			const int result = function(input ? 0 : 1, index);
++			return result == 1 ? "OK" : "ERROR invalid-device-" + std::to_string(result);
++		} catch (...) {
++			return "ERROR invalid-device";
++		}
++	}
++#endif
++	if (line.rfind("MOVE ", 0) == 0) {
++		const auto channelName = line.substr(5);
++		if (channelName.empty()) {
++			return "ERROR empty-channel";
++		}
++		mumble_connection_t connection{};
++		mumble_userid_t user{};
++		mumble_channelid_t channel{};
++		if (g_api.getActiveServerConnection(g_pluginID, &connection) != MUMBLE_STATUS_OK
++			|| g_api.getLocalUserID(g_pluginID, connection, &user) != MUMBLE_STATUS_OK
++			|| g_api.findChannelByName(g_pluginID, connection, channelName.c_str(), &channel) != MUMBLE_STATUS_OK) {
++			return "ERROR channel-not-found";
++		}
++		return statusName(g_api.requestUserMove(g_pluginID, connection, user, channel, nullptr));
++	}
++	return "ERROR unknown-command";
++}
++
++#ifdef OS_WINDOWS
++void runPipe() {
++	const std::wstring controlPipe = pipeName();
++	while (g_running.load()) {
++		HANDLE pipe = CreateNamedPipeW(controlPipe.c_str(), PIPE_ACCESS_DUPLEX,
++			PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
++			1, 4096, 4096, 250, nullptr);
++		if (pipe == INVALID_HANDLE_VALUE) {
++			Sleep(500);
++			continue;
++		}
++		const BOOL connected = ConnectNamedPipe(pipe, nullptr) || GetLastError() == ERROR_PIPE_CONNECTED;
++		if (connected && g_running.load()) {
++			char buffer[65536]{};
++			DWORD bytesRead = 0;
++			if (ReadFile(pipe, buffer, sizeof(buffer) - 1, &bytesRead, nullptr) && bytesRead > 0) {
++				std::string command(buffer, bytesRead);
++				while (!command.empty() && (command.back() == '\r' || command.back() == '\n' || command.back() == '\0')) {
++					command.pop_back();
++				}
++				const std::string response = executeCommand(command) + "\n";
++				DWORD bytesWritten = 0;
++				WriteFile(pipe, response.data(), static_cast< DWORD >(response.size()), &bytesWritten, nullptr);
++				FlushFileBuffers(pipe);
++			}
++		}
++		DisconnectNamedPipe(pipe);
++		CloseHandle(pipe);
++	}
++}
++
++void wakePipe() {
++	const std::wstring controlPipe = pipeName();
++	HANDLE pipe = CreateFileW(controlPipe.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
++	if (pipe != INVALID_HANDLE_VALUE) {
++		CloseHandle(pipe);
++	}
++}
++#endif
++} // namespace
++
++extern "C" MUMBLE_PLUGIN_EXPORT mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
++	g_pluginID = pluginID;
++	g_running.store(true);
++#ifdef OS_WINDOWS
++	g_pipeThread = std::thread(runPipe);
++#endif
++	g_api.log(g_pluginID, "EchoDeck native control bridge initialized");
++	return MUMBLE_STATUS_OK;
++}
++
++extern "C" MUMBLE_PLUGIN_EXPORT void mumble_shutdown() {
++	g_running.store(false);
++#ifdef OS_WINDOWS
++	wakePipe();
++	if (g_pipeThread.joinable()) {
++		g_pipeThread.join();
++	}
++#endif
++}
++
++extern "C" MUMBLE_PLUGIN_EXPORT MumbleStringWrapper mumble_getName() { return staticString("EchoDeck Bridge"); }
++extern "C" MUMBLE_PLUGIN_EXPORT mumble_version_t mumble_getAPIVersion() { return MUMBLE_PLUGIN_API_VERSION; }
++extern "C" MUMBLE_PLUGIN_EXPORT void mumble_registerAPIFunctions(void *api) { g_api = MUMBLE_API_CAST(api); }
++extern "C" MUMBLE_PLUGIN_EXPORT void mumble_releaseResource(const void *) {}
++extern "C" MUMBLE_PLUGIN_EXPORT mumble_version_t mumble_getVersion() { return { 0, 1, 0 }; }
++extern "C" MUMBLE_PLUGIN_EXPORT MumbleStringWrapper mumble_getAuthor() { return staticString("EchoDeck"); }
++extern "C" MUMBLE_PLUGIN_EXPORT MumbleStringWrapper mumble_getDescription() {
++	return staticString("Local IPC control for EchoDeck's Electron UI and Mumble native audio core.");
++}
++extern "C" MUMBLE_PLUGIN_EXPORT uint32_t mumble_getFeatures() { return MUMBLE_FEATURE_NONE; }
++extern "C" MUMBLE_PLUGIN_EXPORT uint32_t mumble_deactivateFeatures(uint32_t features) { return features; }

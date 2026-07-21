@@ -1,0 +1,360 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>POIO — 低延迟语音与原画屏幕共享</title>
+    <meta
+      name="description"
+      content="POIO Windows 客户端：低延迟语音、频道聊天、图片文件与高清屏幕共享。"
+    />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #0b0c12;
+        color: #eef0f7;
+        font-family: Inter, "Microsoft YaHei", system-ui, sans-serif;
+        overflow-x: hidden;
+      }
+      body:before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background:
+          radial-gradient(circle at 16% 5%, #7458ff31, transparent 35%),
+          radial-gradient(circle at 92% 82%, #2bd5bc1d, transparent 32%);
+        pointer-events: none;
+      }
+      .nav {
+        height: 70px;
+        max-width: 1160px;
+        margin: auto;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 24px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 800;
+      }
+      .logo {
+        width: 48px;
+        height: 36px;
+        border-radius: 11px;
+        background: linear-gradient(145deg, #8a72ff, #5c3de8);
+        position: relative;
+        box-shadow: 0 12px 30px #6d4ff94f;
+        display: grid;
+        place-items: center;
+        color: #fff;
+        font-size: 10px;
+        font-weight: 1000;
+        font-style: italic;
+        letter-spacing: -1.8px;
+        transform: skew(5deg);
+      }
+      .nav a {
+        color: #adb0bf;
+        text-decoration: none;
+        font-size: 13px;
+      }
+      .hero {
+        min-height: 650px;
+        max-width: 1160px;
+        margin: auto;
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        align-items: center;
+        padding: 55px 24px 90px;
+        position: relative;
+      }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: #a99aff;
+        background: #7458ff17;
+        border: 1px solid #8068ff36;
+        padding: 7px 11px;
+        border-radius: 99px;
+        font-size: 11px;
+      }
+      .eyebrow i {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #4ce0c5;
+        box-shadow: 0 0 12px #4ce0c5;
+      }
+      .hero h1 {
+        font-size: 64px;
+        line-height: 1.04;
+        letter-spacing: -3px;
+        margin: 24px 0 18px;
+      }
+      .hero h1 span {
+        background: linear-gradient(100deg, #a797ff, #6750ef 50%, #4cdbc5);
+        -webkit-background-clip: text;
+        color: transparent;
+      }
+      .hero p {
+        max-width: 550px;
+        color: #979baa;
+        line-height: 1.8;
+        font-size: 16px;
+      }
+      .actions {
+        display: flex;
+        gap: 12px;
+        margin-top: 34px;
+      }
+      .download {
+        height: 52px;
+        padding: 0 24px;
+        border-radius: 13px;
+        background: linear-gradient(135deg, #8166ff, #6545eb);
+        color: white;
+        text-decoration: none;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-weight: 700;
+        box-shadow: 0 15px 40px #6545ed3d;
+      }
+      .ghost {
+        height: 52px;
+        padding: 0 20px;
+        border: 1px solid #ffffff13;
+        border-radius: 13px;
+        color: #b6b9c6;
+        text-decoration: none;
+        display: flex;
+        align-items: center;
+        background: #ffffff05;
+      }
+      .meta {
+        margin-top: 14px;
+        color: #686c7d;
+        font-size: 10px;
+      }
+      .mock {
+        height: 430px;
+        background: #151720;
+        border: 1px solid #ffffff13;
+        border-radius: 24px;
+        box-shadow: 0 40px 100px #0009;
+        overflow: hidden;
+        transform: perspective(900px) rotateY(-5deg) rotateX(2deg);
+        display: grid;
+        grid-template-columns: 58px 150px 1fr;
+      }
+      .mock .rail {
+        background: #0b0c11;
+        padding: 15px 10px;
+      }
+      .bubble {
+        width: 36px;
+        height: 36px;
+        border-radius: 13px;
+        background: #232631;
+        margin-bottom: 9px;
+      }
+      .bubble:first-child {
+        background: linear-gradient(145deg, #876fff, #5c40e9);
+      }
+      .mock .channels {
+        background: #151720;
+        padding: 18px 12px;
+      }
+      .line {
+        height: 9px;
+        border-radius: 9px;
+        background: #ffffff0c;
+        margin: 13px 0;
+      }
+      .line.active {
+        height: 30px;
+        background: #7458ff20;
+      }
+      .mock .chat {
+        background: #1a1c25;
+        padding: 20px;
+      }
+      .screen {
+        height: 160px;
+        border-radius: 14px;
+        background: linear-gradient(145deg, #0e1018, #262238);
+        border: 1px solid #ffffff0d;
+        display: grid;
+        place-items: center;
+        color: #8f80e9;
+        font-size: 12px;
+      }
+      .message {
+        height: 35px;
+        border-radius: 9px;
+        background: #ffffff08;
+        margin-top: 14px;
+      }
+      .features {
+        max-width: 1160px;
+        margin: auto;
+        padding: 30px 24px 110px;
+      }
+      .features h2 {
+        text-align: center;
+        font-size: 34px;
+      }
+      .features > p {
+        text-align: center;
+        color: #818595;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+        margin-top: 38px;
+      }
+      .card {
+        background: #14161ed9;
+        border: 1px solid #ffffff0d;
+        border-radius: 18px;
+        padding: 24px;
+      }
+      .icon {
+        width: 42px;
+        height: 42px;
+        border-radius: 13px;
+        background: #7458ff1b;
+        display: grid;
+        place-items: center;
+        color: #9d8cff;
+      }
+      .card h3 {
+        font-size: 15px;
+        margin: 18px 0 9px;
+      }
+      .card p {
+        font-size: 12px;
+        line-height: 1.7;
+        color: #818595;
+      }
+      .footer {
+        border-top: 1px solid #ffffff0c;
+        text-align: center;
+        color: #626677;
+        font-size: 11px;
+        padding: 28px;
+      }
+      @media (max-width: 850px) {
+        .hero {
+          grid-template-columns: 1fr;
+          text-align: center;
+        }
+        .hero p {
+          margin: auto;
+        }
+        .actions {
+          justify-content: center;
+        }
+        .mock {
+          display: none;
+        }
+        .hero h1 {
+          font-size: 46px;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="nav">
+      <div class="brand">
+        <div class="logo">POIO</div>
+        POIO
+      </div>
+      <a href="#features">功能</a>
+    </nav>
+    <main>
+      <section class="hero">
+        <div>
+          <span class="eyebrow"><i></i> Windows Preview 0.3.8</span>
+          <h1>听得清，<br /><span>分享得更快。</span></h1>
+          <p>
+            为游戏与小团队打造的实时语音社区。原生 Mumble Opus
+            语音、频道消息、图片文件，以及带系统声音的原画 60fps
+            低延迟屏幕共享。
+          </p>
+          <div class="actions">
+            <a
+              class="download"
+              href="https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-0.3.8-x64-Setup.exe"
+              >↓ 下载 Windows 版</a
+            ><a class="ghost" href="#features">了解更多</a>
+          </div>
+          <div class="meta">Windows 10/11 · x64 · 支持应用内在线更新</div>
+        </div>
+        <div class="mock">
+          <div class="rail">
+            <div class="bubble"></div>
+            <div class="bubble"></div>
+            <div class="bubble"></div>
+          </div>
+          <div class="channels">
+            <div class="line"></div>
+            <div class="line active"></div>
+            <div class="line"></div>
+            <div class="line active"></div>
+            <div class="line"></div>
+          </div>
+          <div class="chat">
+            <div class="screen">1080p · 60 FPS · SYSTEM AUDIO</div>
+            <div class="message"></div>
+            <div class="message"></div>
+            <div class="message"></div>
+          </div>
+        </div>
+      </section>
+      <section class="features" id="features">
+        <h2>为实时沟通重新设计</h2>
+        <p>语音、消息和画面在一个频道里自然衔接。</p>
+        <div class="grid">
+          <article class="card">
+            <div class="icon">◉</div>
+            <h3>原生 Mumble Opus 语音</h3>
+            <p>
+              直接使用从 Mumble 源码编译的音频核心、10ms 低延迟分包、FEC
+              与抖动缓冲，支持异常退出自动重启并回到原频道，同时保留静音状态；快速切换频道时会取消过期连接并显示实时连接状态。
+            </p>
+          </article>
+          <article class="card">
+            <div class="icon">▣</div>
+            <h3>清晰屏幕共享</h3>
+            <p>
+              720p、1080p、1080p60 和原画四档，硬件 H.264
+              与自适应多码率，支持系统声音与全屏观看；媒体会话切换采用严格代次隔离，旧连接不会再触碰已关闭的
+              transport。
+            </p>
+          </article>
+          <article class="card">
+            <div class="icon">↗</div>
+            <h3>顺手的频道消息</h3>
+            <p>
+              支持区域截图、Markdown、代码块、拖拽或直接粘贴图片和文件，以及最高
+              50 MB 附件；静态与动态头像会在聊天、社区和语音频道中实时同步。
+            </p>
+          </article>
+        </div>
+      </section>
+    </main>
+    <footer class="footer">© 2026 POIO · Preview build</footer>
+  </body>
+</html>

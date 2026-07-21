@@ -1,0 +1,28 @@
+{
+  "name": "echodeck",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,desktop -c blue,magenta \"npm run dev -w @echodeck/server\" \"npm run dev -w @echodeck/desktop\"",
+    "build": "npm run build -w @echodeck/server && npm run build -w @echodeck/desktop",
+    "test": "npm run test -w @echodeck/server && npm run test -w @echodeck/desktop",
+    "dist:win": "npm run dist:win -w @echodeck/desktop"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "allowScripts": {
+    "argon2@0.44.0": true,
+    "better-sqlite3@12.11.1": true,
+    "electron-winstaller@5.4.0": true,
+    "esbuild@0.28.1": true,
+    "mediasoup@3.21.2": true
+  }
+}
