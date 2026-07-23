@@ -1,8 +1,8 @@
 {
-  "versionCode": 23,
-  "versionName": "0.1.0-p22",
+  "versionCode": 24,
+  "versionName": "0.1.0-p23",
   "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
-  "sha256": "A0D629F220CF257785E32C40F2FB081E6B62FDE53131D55BBF8ADBBB12AFB187",
+  "sha256": "14D11583580D3E742ADD2184517C92425C806EF4E25E46EE8844FBF2B0F677E9",
   "size": 44110388,
-  "notes": "修复打开键盘后聊天输入框与键盘之间出现大块空白的问题；输入区现在紧贴键盘顶部，消息列表会使用剩余空间。包含语音房间消息入口、离线状态卡、快速语音重连和共享声音开关。"
+  "notes": "修复部分手机输入法遮挡聊天输入框的问题；现在会检测窗口已经避让的高度，只补齐剩余键盘高度，同时避免输入区上方出现大块空白。包含语音房间消息入口、离线状态卡、快速语音重连和共享声音开关。"
 }

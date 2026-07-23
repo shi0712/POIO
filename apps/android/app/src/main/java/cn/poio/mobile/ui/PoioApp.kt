@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -100,6 +101,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -110,6 +112,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.input.pointer.pointerInput
@@ -1051,6 +1054,9 @@ private fun ChatScreen(
     var body by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    var largestContainerHeightPx by remember { mutableIntStateOf(0) }
+    var currentContainerHeightPx by remember { mutableIntStateOf(0) }
     var initialScrollDone by remember { mutableStateOf(false) }
     val nearBottom by remember {
         derivedStateOf {
@@ -1072,10 +1078,25 @@ private fun ChatScreen(
         }
         initialScrollDone = true
     }
-    // The Activity already uses adjustResize when the keyboard opens. Adding
-    // WindowInsets.ime here applies the keyboard height a second time and
-    // leaves a large empty band between the composer and the IME.
-    Column(modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars)) {
+    val remainingBottomInsetPx = remainingImeInset(
+        imeBottomPx = WindowInsets.ime.getBottom(density),
+        navigationBottomPx = WindowInsets.navigationBars.getBottom(density),
+        largestContainerHeightPx = largestContainerHeightPx,
+        currentContainerHeightPx = currentContainerHeightPx,
+    )
+    val remainingBottomInset = with(density) { remainingBottomInsetPx.toDp() }
+
+    Box(
+        modifier
+            .fillMaxSize()
+            .onSizeChanged { size ->
+                currentContainerHeightPx = size.height
+                if (size.height > largestContainerHeightPx) {
+                    largestContainerHeightPx = size.height
+                }
+            },
+    ) {
+        Column(Modifier.fillMaxSize().padding(bottom = remainingBottomInset)) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
                 state = listState,
@@ -1117,6 +1138,17 @@ private fun ChatScreen(
             ) { Icon(Icons.AutoMirrored.Filled.Send, "发送", tint = Color.White) }
         }
     }
+}
+}
+
+internal fun remainingImeInset(
+    imeBottomPx: Int,
+    navigationBottomPx: Int,
+    largestContainerHeightPx: Int,
+    currentContainerHeightPx: Int,
+): Int {
+    val heightAlreadyAvoided = (largestContainerHeightPx - currentContainerHeightPx).coerceAtLeast(0)
+    return (imeBottomPx - heightAlreadyAvoided).coerceAtLeast(navigationBottomPx)
 }
 
 @Composable
