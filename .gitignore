@@ -3,7 +3,7 @@ dist/
 dist-electron/
 release/
 releases/
-data/
+/data/
 work/
 vendor/extract/
 vendor/*.tgz

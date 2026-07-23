@@ -4,6 +4,7 @@ import android.app.Application
 import cn.poio.mobile.data.PoioRepository
 import cn.poio.mobile.session.SecureSessionStore
 import cn.poio.mobile.voice.NativeMumbleVoiceEngine
+import cn.poio.mobile.voice.VoiceState
 import cn.poio.mobile.voice.nextNotificationMuteState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +37,16 @@ class PoioApplication : Application() {
                 observedGeneration = generation
                 val activeChannelId = current.voiceChannelId
                 if (reconnected && activeChannelId != null) {
-                    runCatching { repository.announceVoiceJoin(activeChannelId) }
+                    runCatching {
+                        if (voiceEngine.state.value !is VoiceState.Connected) {
+                            // Asking for fresh credentials also atomically
+                            // claims this account's Mumble username server-side,
+                            // releasing any ghost session before the native
+                            // reconnect loop makes its next attempt.
+                            repository.voiceCredentials(activeChannelId)
+                        }
+                        repository.announceVoiceJoin(activeChannelId)
+                    }
                         .onFailure(repository::reportError)
                 }
             }

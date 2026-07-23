@@ -43,6 +43,7 @@ data class VoiceDeviceState(
 sealed interface VoiceState {
     data object Idle : VoiceState
     data object Connecting : VoiceState
+    data class Reconnecting(val attempt: Int = 0) : VoiceState
     data class Connected(
         val channelName: String,
         val micLevel: Float = 0f,
@@ -245,7 +246,11 @@ class NativeMumbleVoiceEngine(context: Context) : VoiceEngine {
     }
 
     suspend fun selectInputRoute(routeId: Int) = withContext(Dispatchers.IO) {
-        check(mutableState.value !is VoiceState.Connecting && mutableState.value !is VoiceState.Connected) {
+        check(
+            mutableState.value !is VoiceState.Connecting &&
+                mutableState.value !is VoiceState.Reconnecting &&
+                mutableState.value !is VoiceState.Connected,
+        ) {
             "请先挂断语音，再切换输入设备"
         }
         val available = inputRouteSnapshot().any { it.id == routeId }
@@ -269,7 +274,7 @@ class NativeMumbleVoiceEngine(context: Context) : VoiceEngine {
 
     @Keep
     @Suppress("unused")
-    private fun onNativeFailure(message: String) {
+    private fun onNativeFailure(@Suppress("UNUSED_PARAMETER") message: String) {
         // This callback runs on a libmumble worker. Deleting the native session
         // here would make it join its own thread, so cleanup and retry are
         // scheduled on the engine IO scope after the callback returns.
@@ -278,8 +283,8 @@ class NativeMumbleVoiceEngine(context: Context) : VoiceEngine {
             val generation = connectionGeneration
             if (disposed) return
             if (reconnectJob?.isActive == true) return
-            mutableState.value = VoiceState.Failed(message)
-            reconnectJob = engineScope.launch { reconnectLoop(credentials, generation, message) }
+            mutableState.value = VoiceState.Reconnecting()
+            reconnectJob = engineScope.launch { reconnectLoop(credentials, generation) }
         }
     }
 
@@ -529,8 +534,8 @@ class NativeMumbleVoiceEngine(context: Context) : VoiceEngine {
         VoiceForegroundService.update(appContext, current.channelName, current.muted)
     }
 
-    private suspend fun reconnectLoop(credentials: MumbleCredentials, generation: Long, originalMessage: String) {
-        var delayMillis = 1_000L
+    private suspend fun reconnectLoop(credentials: MumbleCredentials, generation: Long) {
+        var delayMillis = 400L
         var attempt = 0
         while (engineScope.isActive && !disposed && desiredCredentials == credentials && connectionGeneration == generation) {
             delay(delayMillis)
@@ -541,15 +546,14 @@ class NativeMumbleVoiceEngine(context: Context) : VoiceEngine {
             }
             if (desiredCredentials != credentials || connectionGeneration != generation) return
             attempt += 1
-            mutableState.value = VoiceState.Connecting
+            mutableState.value = VoiceState.Reconnecting(attempt)
             val result = runCatching { connectOnce(credentials, generation) }
             if (result.isSuccess) return
-            val error = result.exceptionOrNull()
-            if (error is CancellationException) return
-            mutableState.value = VoiceState.Failed(
-                "语音连接中断，自动重连第 ${attempt} 次失败：${error?.message ?: originalMessage}",
-            )
-            delayMillis = (delayMillis * 2).coerceAtMost(15_000L)
+            if (result.exceptionOrNull() is CancellationException) return
+            // Keep technical TLS/reject details in native logs. The user only
+            // needs a stable reconnecting state and a manual escape hatch.
+            mutableState.value = VoiceState.Reconnecting(attempt)
+            delayMillis = (delayMillis * 2).coerceAtMost(5_000L)
         }
     }
 

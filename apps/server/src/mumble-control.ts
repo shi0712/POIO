@@ -22,6 +22,20 @@ async function getServer() {
 
 export function mumbleChannelName(channelId:string){return `ed-${channelId}`;}
 
+export async function claimMumbleUsername(username:string) {
+  try {
+    const instance=await getServer();
+    const users=await instance.getUsers(context) as Map<number,{name:string}>;
+    for(const [session,user] of users) {
+      if(user.name===username)await instance.kickUser(session,'连接已由新的 POIO 会话接管',context);
+    }
+  } catch(error) {
+    server=undefined;
+    if(communicator){await communicator.destroy().catch(()=>{});communicator=undefined;}
+    throw error;
+  }
+}
+
 export function ensureVoiceChannel(channelId:string) {
   const existing=pending.get(channelId);if(existing)return existing;
   const operation=(async()=>{

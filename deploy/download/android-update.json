@@ -1,8 +1,8 @@
 {
-  "versionCode": 20,
-  "versionName": "0.1.0-p19",
+  "versionCode": 21,
+  "versionName": "0.1.0-p20",
   "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
-  "sha256": "CC72E45BE1050826A122DFEF243C00DA168695A9B52169F444CB1A38266A3D54",
-  "size": 44138325,
-  "notes": "后台语音改为 Application 级真实运行时：关闭或重建界面后仍保持 Mumble 与 Socket 连接；通知新增闭麦/打开麦克风和退出语音操作，并在断网后恢复频道在线状态。"
+  "sha256": "7D8B1834876AAE4F4AFC8BA68C6E78DC0C06A473F3381AA516323C12A9E38527",
+  "size": 44093980,
+  "notes": "离线状态改为 POIO 顶部状态卡，不再弹出 Socket.IO 原始异常；网络恢复后自动同步频道；Mumble 重连会清理同账号残留会话，缩短 user already in use / TLS 等待；观看屏幕共享可独立关闭共享声音。"
 }

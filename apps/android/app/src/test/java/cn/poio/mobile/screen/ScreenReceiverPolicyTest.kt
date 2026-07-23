@@ -3,7 +3,9 @@ package cn.poio.mobile.screen
 import cn.poio.mobile.model.Channel
 import cn.poio.mobile.model.ChannelKind
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ScreenReceiverPolicyTest {
@@ -36,5 +38,13 @@ class ScreenReceiverPolicyTest {
         assertEquals(8_000L, screenReconnectDelayMillis(3))
         assertEquals(15_000L, screenReconnectDelayMillis(4))
         assertEquals(15_000L, screenReconnectDelayMillis(20))
+    }
+
+    @Test
+    fun screenAudioPreferenceOnlyDisablesTheSharedAudioTrack() {
+        assertFalse(shouldEnableRemoteScreenTrack("screen-audio", "audio", screenAudioEnabled = false))
+        assertTrue(shouldEnableRemoteScreenTrack("screen-audio", "audio", screenAudioEnabled = true))
+        assertTrue(shouldEnableRemoteScreenTrack("screen", "video", screenAudioEnabled = false))
+        assertTrue(shouldEnableRemoteScreenTrack("voice", "audio", screenAudioEnabled = false))
     }
 }

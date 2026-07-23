@@ -41,7 +41,11 @@ data class RemoteScreenTrack(
 sealed interface ScreenReceiverState {
     data object Idle : ScreenReceiverState
     data object Connecting : ScreenReceiverState
-    data class Watching(val tracks: List<RemoteScreenTrack>, val quality: ScreenQuality) : ScreenReceiverState
+    data class Watching(
+        val tracks: List<RemoteScreenTrack>,
+        val quality: ScreenQuality,
+        val screenAudioEnabled: Boolean = true,
+    ) : ScreenReceiverState
     data class Failed(val message: String) : ScreenReceiverState
 }
 
@@ -56,6 +60,7 @@ interface ScreenReceiver {
     val state: StateFlow<ScreenReceiverState>
     suspend fun join(channelId: String)
     suspend fun setQuality(quality: ScreenQuality)
+    suspend fun setScreenAudioEnabled(enabled: Boolean)
     suspend fun leave()
 }
 
@@ -71,6 +76,7 @@ class MediasoupScreenReceiver(
     override val state: StateFlow<ScreenReceiverState> = mutableState.asStateFlow()
     private var channelId = ""
     private var quality = ScreenQuality.AUTO
+    private var screenAudioEnabled = true
     private var peerConnectionFactory: PeerConnectionFactory? = null
     private var device: Device? = null
     private var transport: RecvTransport? = null
@@ -113,7 +119,7 @@ class MediasoupScreenReceiver(
                     sctpParameters = transportInfo.optJSONObject("sctpParameters")?.toString(),
                 )
                 transport = recvTransport
-                mutableState.value = ScreenReceiverState.Watching(emptyList(), quality)
+                mutableState.value = ScreenReceiverState.Watching(emptyList(), quality, screenAudioEnabled)
                 val producers = joined.optJSONArray("producers")
                 if (producers != null) for (index in 0 until producers.length()) consume(producers.getJSONObject(index))
                 val queued = pendingProducers.values.toList()
@@ -137,6 +143,14 @@ class MediasoupScreenReceiver(
                 JSONObject().put("consumerId", track.consumerId).put("spatialLayer", layer),
             )
         }
+    }
+
+    override suspend fun setScreenAudioEnabled(enabled: Boolean) = withContext(mediaDispatcher) {
+        screenAudioEnabled = enabled
+        tracks.values
+            .filter { it.mediaTag == "screen-audio" }
+            .forEach { it.track.setEnabled(enabled) }
+        publish()
     }
 
     override suspend fun leave() = withContext(mediaDispatcher) {
@@ -188,6 +202,9 @@ class MediasoupScreenReceiver(
             mediaTag = appData?.optString("mediaTag", consumer.kind) ?: consumer.kind,
             track = consumer.track,
         )
+        remote.track.setEnabled(
+            shouldEnableRemoteScreenTrack(remote.mediaTag, consumer.kind, screenAudioEnabled),
+        )
         tracks[producerId] = remote
         publish()
         signaling.request("media:resumeConsumer", JSONObject().put("consumerId", consumer.id))
@@ -210,7 +227,13 @@ class MediasoupScreenReceiver(
     }
 
     private fun publish() {
-        if (channelId.isNotEmpty()) mutableState.value = ScreenReceiverState.Watching(tracks.values.toList(), quality)
+        if (channelId.isNotEmpty()) {
+            mutableState.value = ScreenReceiverState.Watching(
+                tracks = tracks.values.toList(),
+                quality = quality,
+                screenAudioEnabled = screenAudioEnabled,
+            )
+        }
     }
 
     private suspend fun leaveLocked(notifyServer: Boolean) {
@@ -309,3 +332,9 @@ class MediasoupScreenReceiver(
         }
     }
 }
+
+internal fun shouldEnableRemoteScreenTrack(
+    mediaTag: String,
+    kind: String,
+    screenAudioEnabled: Boolean,
+): Boolean = mediaTag != "screen-audio" || !kind.equals("audio", ignoreCase = true) || screenAudioEnabled

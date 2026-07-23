@@ -48,12 +48,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.Home
@@ -67,6 +69,7 @@ import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tag
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -151,8 +154,10 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import org.webrtc.RendererCommon
+import org.webrtc.AudioTrack
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
@@ -301,6 +306,9 @@ private fun HomeScreen(
     var channelOpen by rememberSaveable { mutableStateOf(false) }
     var pendingVoiceJoin by remember { mutableStateOf<Channel?>(null) }
     var dismissedUpdateVersion by rememberSaveable { mutableStateOf<Int?>(null) }
+    var hasConnectedOnce by rememberSaveable { mutableStateOf(state.connected) }
+    var connectionWasLost by rememberSaveable { mutableStateOf(false) }
+    var showConnectionRestored by remember { mutableStateOf(false) }
     val homeScope = rememberCoroutineScope()
     val startUpdateDownload: (AndroidUpdateInfo) -> Unit = { info ->
         actions.downloadUpdate(info)
@@ -314,6 +322,20 @@ private fun HomeScreen(
     }
     LaunchedEffect(state.error) {
         state.error?.let { snackbar.showSnackbar(it); actions.clearError() }
+    }
+    LaunchedEffect(state.connected) {
+        if (state.connected) {
+            if (hasConnectedOnce && connectionWasLost) {
+                showConnectionRestored = true
+                connectionWasLost = false
+                delay(2_200)
+                showConnectionRestored = false
+            }
+            hasConnectedOnce = true
+        } else {
+            showConnectionRestored = false
+            if (hasConnectedOnce) connectionWasLost = true
+        }
     }
     val openChannel: (Channel) -> Unit = { channel ->
         actions.selectChannel(channel.id)
@@ -384,6 +406,7 @@ private fun HomeScreen(
                     voiceState = voiceState,
                     screenState = screenState,
                     onScreenQuality = actions::setScreenQuality,
+                    onScreenAudio = actions::setScreenAudioEnabled,
                     onRetryScreen = actions::retryScreenReceiver,
                     onJoin = { onJoinVoice(channel.id) },
                     onLeave = actions::leaveVoice,
@@ -397,13 +420,22 @@ private fun HomeScreen(
                 )
             }
         }
-            AndroidUpdateProgressBanner(
-                state = updateState,
-                onInstall = actions::installReadyUpdate,
-                modifier = Modifier.align(Alignment.TopCenter)
+            Column(
+                Modifier.align(Alignment.TopCenter)
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-            )
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                NetworkStatusBanner(
+                    connected = state.connected,
+                    connecting = state.connecting,
+                    restored = showConnectionRestored,
+                )
+                AndroidUpdateProgressBanner(
+                    state = updateState,
+                    onInstall = actions::installReadyUpdate,
+                )
+            }
         }
     }
     spaceDialog?.let { mode -> NameDialog(if (mode == SpaceDialog.CREATE) "创建社区" else "输入邀请码", onDismiss = { spaceDialog = null }) { value ->
@@ -593,7 +625,9 @@ private fun HomeScreen(
         VoiceSettingsDialog(
             devices = voiceDeviceState,
             microphoneTestState = microphoneTestState,
-            voiceConnected = voiceState is VoiceState.Connecting || voiceState is VoiceState.Connected,
+            voiceConnected = voiceState is VoiceState.Connecting ||
+                voiceState is VoiceState.Reconnecting ||
+                voiceState is VoiceState.Connected,
             onInputRoute = actions::selectInputRoute,
             onStartTest = onStartMicrophoneTest,
             onStopTest = actions::stopMicrophoneTest,
@@ -1147,6 +1181,63 @@ private fun formatBytes(bytes: Long): String = when {
 }
 
 @Composable
+private fun NetworkStatusBanner(
+    connected: Boolean,
+    connecting: Boolean,
+    restored: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    if (connected && !restored) return
+    val recovered = connected && restored
+    val accent = if (recovered) Color(0xFF5CEB91) else Color(0xFFFFB85C)
+    Row(
+        modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color(0xF22B2E35))
+            .border(1.dp, accent.copy(alpha = 0.7f), RoundedCornerShape(18.dp))
+            .padding(horizontal = 15.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            Modifier.size(38.dp).clip(RoundedCornerShape(12.dp))
+                .background(accent.copy(alpha = 0.13f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (recovered) Icons.Default.CheckCircle else Icons.Default.WifiOff,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(21.dp),
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                if (recovered) "网络已恢复" else "网络连接已断开",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                when {
+                    recovered -> "POIO 已重新连接，频道状态正在同步"
+                    connecting -> "正在自动重连，语音会同步恢复"
+                    else -> "等待网络恢复，POIO 会自动重试"
+                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+            )
+        }
+        if (!recovered && connecting) {
+            CircularProgressIndicator(
+                Modifier.size(19.dp),
+                color = accent,
+                strokeWidth = 2.dp,
+            )
+        }
+    }
+}
+
+@Composable
 private fun AndroidUpdateProgressBanner(
     state: AndroidUpdateState,
     onInstall: () -> Unit,
@@ -1233,6 +1324,7 @@ private fun VoiceRoom(
     voiceState: VoiceState,
     screenState: ScreenReceiverState,
     onScreenQuality: (ScreenQuality) -> Unit,
+    onScreenAudio: (Boolean) -> Unit,
     onRetryScreen: () -> Unit,
     onJoin: () -> Unit,
     onLeave: () -> Unit,
@@ -1299,6 +1391,7 @@ private fun VoiceRoom(
                 expanded = showScreen,
                 onExpandedChange = { showScreen = it },
                 onQuality = onScreenQuality,
+                onAudioEnabled = onScreenAudio,
                 onRetry = onRetryScreen,
             )
             if (members.isEmpty()) {
@@ -1414,6 +1507,22 @@ private fun VoiceRoom(
                     Spacer(Modifier.width(8.dp))
                     Text("正在连接 Mumble… 可在下方强制重新加载")
                 }
+                is VoiceState.Reconnecting -> Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF25232E)).padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text("语音连接正在恢复", fontWeight = FontWeight.Bold)
+                    }
+                    Text(
+                        "已自动尝试 ${voiceState.attempt.coerceAtLeast(1)} 次，无需退出频道",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 else -> Unit
             }
         }
@@ -1451,6 +1560,13 @@ private fun VoiceRoom(
                 }
                 VoiceState.Connecting -> {
                     MobileVoiceControl(Icons.Default.Refresh, "重新加载", active = true, onClick = onJoin)
+                    MobileVoiceControl(Icons.Default.PowerSettingsNew, "退出", active = false, danger = true) {
+                        onLeave()
+                        onBack()
+                    }
+                }
+                is VoiceState.Reconnecting -> {
+                    MobileVoiceControl(Icons.Default.Refresh, "立即重试", active = true, onClick = onJoin)
                     MobileVoiceControl(Icons.Default.PowerSettingsNew, "退出", active = false, danger = true) {
                         onLeave()
                         onBack()
@@ -1560,6 +1676,7 @@ private fun ScreenStage(
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onQuality: (ScreenQuality) -> Unit,
+    onAudioEnabled: (Boolean) -> Unit,
     onRetry: () -> Unit,
 ) {
     when (state) {
@@ -1609,6 +1726,9 @@ private fun ScreenStage(
         }
         is ScreenReceiverState.Watching -> {
             val videos = state.tracks.filter { it.mediaTag == "screen" && it.track is VideoTrack }
+            val hasScreenAudio = state.tracks.any {
+                it.mediaTag == "screen-audio" && it.track is AudioTrack
+            }
             if (videos.isNotEmpty()) {
                 Column(
                     Modifier.fillMaxWidth()
@@ -1649,6 +1769,9 @@ private fun ScreenStage(
                                 ownerName = screenShareOwnerName(track.userId, members),
                                 quality = state.quality,
                                 onQuality = onQuality,
+                                screenAudioAvailable = hasScreenAudio,
+                                screenAudioEnabled = state.screenAudioEnabled,
+                                onScreenAudioEnabled = onAudioEnabled,
                             )
                         }
                         Row(
@@ -1670,6 +1793,29 @@ private fun ScreenStage(
                                 }
                             }
                         }
+                        if (hasScreenAudio) {
+                            FilledTonalButton(
+                                onClick = { onAudioEnabled(!state.screenAudioEnabled) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(
+                                    if (state.screenAudioEnabled) {
+                                        Icons.AutoMirrored.Filled.VolumeUp
+                                    } else {
+                                        Icons.AutoMirrored.Filled.VolumeOff
+                                    },
+                                    null,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    if (state.screenAudioEnabled) {
+                                        "共享声音已开启"
+                                    } else {
+                                        "共享声音已关闭"
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1683,6 +1829,9 @@ private fun RemoteScreen(
     ownerName: String,
     quality: ScreenQuality,
     onQuality: (ScreenQuality) -> Unit,
+    screenAudioAvailable: Boolean,
+    screenAudioEnabled: Boolean,
+    onScreenAudioEnabled: (Boolean) -> Unit,
 ) {
     val videoTrack = remote.track as VideoTrack
     var fullscreen by remember { mutableStateOf(false) }
@@ -1710,6 +1859,9 @@ private fun RemoteScreen(
                 remote = remote,
                 quality = quality,
                 onQuality = onQuality,
+                screenAudioAvailable = screenAudioAvailable,
+                screenAudioEnabled = screenAudioEnabled,
+                onScreenAudioEnabled = onScreenAudioEnabled,
                 onClose = { fullscreen = false },
             )
         }
@@ -1724,6 +1876,9 @@ private fun FullscreenScreenViewer(
     remote: RemoteScreenTrack,
     quality: ScreenQuality,
     onQuality: (ScreenQuality) -> Unit,
+    screenAudioAvailable: Boolean,
+    screenAudioEnabled: Boolean,
+    onScreenAudioEnabled: (Boolean) -> Unit,
     onClose: () -> Unit,
 ) {
     val videoTrack = remote.track as VideoTrack
@@ -1818,6 +1973,22 @@ private fun FullscreenScreenViewer(
                         } else {
                             OutlinedButton(onClick = { onQuality(option) }) { Text(screenQualityLabel(option)) }
                         }
+                    }
+                }
+                if (screenAudioAvailable) {
+                    FilledTonalButton(
+                        onClick = { onScreenAudioEnabled(!screenAudioEnabled) },
+                    ) {
+                        Icon(
+                            if (screenAudioEnabled) {
+                                Icons.AutoMirrored.Filled.VolumeUp
+                            } else {
+                                Icons.AutoMirrored.Filled.VolumeOff
+                            },
+                            null,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (screenAudioEnabled) "关闭共享声音" else "打开共享声音")
                     }
                 }
             }

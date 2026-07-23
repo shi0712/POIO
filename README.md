@@ -12,7 +12,7 @@
   <a href="https://www.modelscope.cn/models/sjw712/POIO/files">ModelScope 镜像</a>
 </p>
 
-> 当前版本：Windows **0.3.8 Preview**、Android **0.1.0-p19**。Windows 安装包尚未进行代码签名，首次运行时可能显示 SmartScreen 提示；Android 当前提供 arm64 APK。
+> 当前版本：Windows **0.3.8 Preview**、Android **0.1.0-p20**。Windows 安装包尚未进行代码签名，首次运行时可能显示 SmartScreen 提示；Android 当前提供 arm64 APK。
 
 ## 已实现功能
 
@@ -23,7 +23,7 @@
 - 支持 PNG、JPG、WebP、GIF 自定义头像，GIF 可作为动态头像显示。
 - mediasoup/WebRTC 屏幕共享，提供 720p30、1080p30、1080p60 和原画档位，支持系统音频、观看全屏与共享结束清理。
 - 客户端内检查更新、后台下载和重启安装。
-- Android 版支持登录状态恢复、原生 Mumble 语音、频道聊天、附件、动态头像、观看桌面共享、应用内下载进度与安装更新。
+- Android 版支持登录状态恢复、原生 Mumble 语音、频道聊天、附件、动态头像、观看桌面共享（可独立控制共享声音）、断线状态卡、应用内下载进度与安装更新。
 
 ## 架构
 

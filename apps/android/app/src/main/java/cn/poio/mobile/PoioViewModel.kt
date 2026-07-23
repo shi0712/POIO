@@ -138,7 +138,11 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
         }
     }
     override fun startMicrophoneTest() {
-        if (voiceState.value is VoiceState.Connecting || voiceState.value is VoiceState.Connected) {
+        if (
+            voiceState.value is VoiceState.Connecting ||
+            voiceState.value is VoiceState.Reconnecting ||
+            voiceState.value is VoiceState.Connected
+        ) {
             repository.reportError(IllegalStateException("请先挂断语音，再测试麦克风"))
             return
         }
@@ -150,6 +154,11 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
     override fun stopMicrophoneTest() = microphoneTester.stop()
     override fun setScreenQuality(quality: ScreenQuality) {
         viewModelScope.launch { runCatching { screenReceiver.setQuality(quality) }.onFailure(repository::reportError) }
+    }
+    override fun setScreenAudioEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            runCatching { screenReceiver.setScreenAudioEnabled(enabled) }.onFailure(repository::reportError)
+        }
     }
     override fun retryScreenReceiver() {
         screenRecoveryJob?.cancel()
@@ -254,6 +263,7 @@ interface PoioActions {
     fun startMicrophoneTest()
     fun stopMicrophoneTest()
     fun setScreenQuality(quality: ScreenQuality)
+    fun setScreenAudioEnabled(enabled: Boolean)
     fun retryScreenReceiver()
     fun showError(message: String)
     fun checkForUpdates()
