@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -1073,7 +1072,10 @@ private fun ChatScreen(
         }
         initialScrollDone = true
     }
-    Column(modifier.fillMaxSize().imePaddingCompat()) {
+    // The Activity already uses adjustResize when the keyboard opens. Adding
+    // WindowInsets.ime here applies the keyboard height a second time and
+    // leaves a large empty band between the composer and the IME.
+    Column(modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars)) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
                 state = listState,
@@ -2142,6 +2144,3 @@ private fun ChannelDialog(onDismiss: () -> Unit, onConfirm: (String, Boolean) ->
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
-
-@Composable
-private fun Modifier.imePaddingCompat(): Modifier = this.windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
