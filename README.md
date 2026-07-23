@@ -4,15 +4,15 @@
 
 <h1 align="center">POIO</h1>
 
-<p align="center">面向朋友与小型社区的 Windows 语音、聊天和低延迟屏幕共享客户端。</p>
+<p align="center">面向朋友与小型社区的 Windows / Android 语音、聊天和低延迟屏幕共享客户端。</p>
 
 <p align="center">
-  <a href="https://github.com/shi0712/POIO/releases/latest">下载最新版</a> ·
-  <a href="https://115.159.222.29/echodeck/download/">POIO 官网</a> ·
+  <a href="https://115.159.222.29/poio/download/">下载最新版</a> ·
+  <a href="https://115.159.222.29/poio/download/">POIO 官网</a> ·
   <a href="https://www.modelscope.cn/models/sjw712/POIO/files">ModelScope 镜像</a>
 </p>
 
-> 当前版本：**0.3.8 Preview**。仅提供 Windows 10/11 x64 安装包，尚未进行代码签名，首次运行时 Windows 可能显示 SmartScreen 提示。
+> 当前版本：Windows **0.3.8 Preview**、Android **0.1.0-p17**。Windows 安装包尚未进行代码签名，首次运行时可能显示 SmartScreen 提示；Android 当前提供 arm64 APK。
 
 ## 已实现功能
 
@@ -23,12 +23,14 @@
 - 支持 PNG、JPG、WebP、GIF 自定义头像，GIF 可作为动态头像显示。
 - mediasoup/WebRTC 屏幕共享，提供 720p30、1080p30、1080p60 和原画档位，支持系统音频、观看全屏与共享结束清理。
 - 客户端内检查更新、后台下载和重启安装。
+- Android 版支持登录状态恢复、原生 Mumble 语音、频道聊天、附件、动态头像、观看桌面共享、应用内下载进度与安装更新。
 
 ## 架构
 
 | 模块 | 实现 |
 | --- | --- |
 | Windows 客户端 | Electron、React、TypeScript、隔离的 preload IPC |
+| Android 客户端 | Kotlin、Jetpack Compose、NDK/JNI、AAudio、libmediasoupclient |
 | 语音 | 修改后的原生 Mumble 客户端、Mumble Server、Opus |
 | 业务与实时状态 | Node.js、Express、Socket.IO |
 | 屏幕共享 | mediasoup、WebRTC、VP8/H.264（取决于系统能力） |
@@ -43,7 +45,7 @@
 
 ## 使用发行版
 
-1. 从 [GitHub Releases](https://github.com/shi0712/POIO/releases/latest) 下载 `POIO-0.3.8-x64-Setup.exe`。
+1. 从 [POIO 下载页](https://115.159.222.29/poio/download/) 下载 Windows 安装包或 Android arm64 APK。
 2. 安装并注册/登录账号。
 3. 创建社区后复制邀请码给朋友；朋友首次加入后，社区会保留在左侧列表，不必每次重新输入。
 4. 进入语音频道即可连接 Mumble 原生语音；“共享屏幕”可选择来源和清晰度。
@@ -76,6 +78,19 @@ npm run dist:win  # 生成 Windows NSIS 安装包
 ```
 
 `npm run dist:win` 会把 `apps/desktop/resources/mumble/` 中的原生 Mumble 运行时一同打包。当前仓库保留这组已验证的 Windows x64 二进制，方便复现发行包。
+
+### Android
+
+Android 工程位于 `apps/android/`，要求 JDK 17、Android SDK 36、NDK `28.2.13676358` 和 CMake 3.22.1。仓库包含 arm64 版原生 libmumble 运行库，不包含本地 SDK、Gradle 缓存或 APK 构建产物。
+
+在 `apps/android/local.properties` 中配置 `sdk.dir` 后运行：
+
+```powershell
+Set-Location apps/android
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
+```
+
+调试 APK 输出到 `apps/android/app/build/outputs/apk/debug/app-debug.apk`。当前只支持 `arm64-v8a`；升级安装必须继续使用同一 Android 签名密钥。
 
 ## 服务端部署
 

@@ -84,6 +84,13 @@ const leaveVoice = (socketId:string) => {
 };
 
 io.on('connection', (socket) => {
+  socket.on('app:capabilities', (_raw, ack: Ack) => { ok(ack,{
+    protocolVersion:1,
+    serverVersion:'0.3.8',
+    features:{chat:true,attachments:true,animatedAvatars:true,mumbleVoice:true,screenReceive:true,screenPublish:true,preferredLayers:true},
+    media:{codecs:['video/H264','video/VP8','audio/opus'],webRtcPort:config.mediaPort},
+    android:{minimumVersion:1,recommendedVersion:1}
+  }); });
   socket.on('auth:register', async (raw, ack: Ack) => { try {
     const value = z.object({username:z.string().trim().min(2).max(20),password:z.string().min(8).max(128)}).parse(raw);
     const result = await register(value.username, value.password); attachUser(socket,result.user,result.bootstrap); ok(ack, result);
@@ -116,12 +123,14 @@ io.on('connection', (socket) => {
   socket.on('voice:join', (raw, ack: Ack) => { try { const user=auth(socket); const channel=voiceChannelForUser(user.id,z.object({channelId:z.string()}).parse(raw).channelId); leaveVoice(socket.id); voicePresence.set(socket.id,{channelId:channel.id,user}); broadcastVoicePresence(channel.id); ok(ack,{channelId:channel.id,users:voiceUsers(channel.id)}); } catch(e){fail(ack,e);} });
   socket.on('voice:leave', (_raw, ack: Ack) => { try { auth(socket); leaveVoice(socket.id); ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('media:capabilities', (_raw, ack: Ack) => { try { auth(socket); ok(ack,media.rtpCapabilities()); } catch(e){fail(ack,e);} });
-  socket.on('media:join', (raw, ack: Ack) => { try { const channelId=z.object({channelId:z.string()}).parse(raw).channelId; const user=auth(socket); for(const room of socket.rooms)if(room.startsWith('media:'))socket.leave(room); const peers=media.joinMedia(socket.id,user.id,channelId); socket.join(`media:${channelId}`); socket.to(`media:${channelId}`).emit('media:peerJoined',{user}); ok(ack,{peers,producers:media.roomProducers(socket.id)}); } catch(e){fail(ack,e);} });
+  socket.on('media:join', (raw, ack: Ack) => { try { const channelId=z.object({channelId:z.string()}).parse(raw).channelId; const user=auth(socket); voiceChannelForUser(user.id,channelId); for(const room of socket.rooms)if(room.startsWith('media:'))socket.leave(room); const peers=media.joinMedia(socket.id,user.id,channelId); socket.join(`media:${channelId}`); socket.to(`media:${channelId}`).emit('media:peerJoined',{user}); ok(ack,{peers,producers:media.roomProducers(socket.id)}); } catch(e){fail(ack,e);} });
+  socket.on('media:leave', (_raw, ack: Ack) => { try { auth(socket); media.leaveMedia(socket.id); for(const room of socket.rooms)if(room.startsWith('media:'))socket.leave(room); ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('media:createTransport', (_raw, ack: Ack) => { void media.createTransport(socket.id).then((v)=>ok(ack,v)).catch((e)=>fail(ack,e)); });
   socket.on('media:connectTransport', (raw, ack: Ack) => { void media.connectTransport(socket.id,raw.transportId,raw.dtlsParameters).then(()=>ok(ack,true)).catch((e)=>fail(ack,e)); });
   socket.on('media:produce', (raw, ack: Ack) => { void media.produce(socket.id,raw.transportId,raw.kind,raw.rtpParameters,raw.appData).then((v)=>{ socket.to(`media:${v.channelId}`).emit('media:newProducer',{producerId:v.id,userId:v.userId,kind:v.kind,appData:v.appData}); ok(ack,{id:v.id}); }).catch((e)=>fail(ack,e)); });
   socket.on('media:consume', (raw, ack: Ack) => { void media.consume(socket.id,raw.transportId,raw.producerId,raw.rtpCapabilities).then((v)=>ok(ack,v)).catch((e)=>fail(ack,e)); });
   socket.on('media:resumeConsumer', (raw, ack: Ack) => { void media.resumeConsumer(socket.id,raw.consumerId).then(()=>ok(ack,true)).catch((e)=>fail(ack,e)); });
+  socket.on('media:setPreferredLayers', (raw, ack: Ack) => { try { auth(socket); const value=z.object({consumerId:z.string(),spatialLayer:z.number().int().min(0).max(2),temporalLayer:z.number().int().min(0).max(2).optional()}).parse(raw); void media.setPreferredLayers(socket.id,value.consumerId,value.spatialLayer,value.temporalLayer).then(result=>ok(ack,result)).catch(error=>fail(ack,error)); } catch(e){fail(ack,e);} });
   socket.on('media:closeProducer', (raw, ack: Ack) => { try { media.closeProducer(socket.id,raw.producerId); ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('disconnect', () => { leaveVoice(socket.id); media.leaveMedia(socket.id); detachUser(socket); });
 });

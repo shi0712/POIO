@@ -1,0 +1,8 @@
+{
+  "versionCode": 18,
+  "versionName": "0.1.0-p17",
+  "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
+  "sha256": "C5E70F6B32DBE3F021FAB713E634DF271ADD00525E0229FBAE705A8FA83D9E09",
+  "size": 44077596,
+  "notes": "修复点击退出语音后仍保持连接：本地状态与 Mumble 原生音频立即断开，服务器在线状态和屏幕接收会话在后台并行清理。"
+}

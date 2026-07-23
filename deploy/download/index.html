@@ -6,7 +6,7 @@
     <title>POIO — 低延迟语音与原画屏幕共享</title>
     <meta
       name="description"
-      content="POIO Windows 客户端：低延迟语音、频道聊天、图片文件与高清屏幕共享。"
+      content="POIO Windows 与 Android 客户端：低延迟语音、频道聊天、图片文件与高清屏幕共享。"
     />
     <style>
       * {
@@ -111,6 +111,7 @@
       }
       .actions {
         display: flex;
+        flex-wrap: wrap;
         gap: 12px;
         margin-top: 34px;
       }
@@ -137,6 +138,10 @@
         display: flex;
         align-items: center;
         background: #ffffff05;
+      }
+      .download.android {
+        background: linear-gradient(135deg, #27c7a7, #158f7f);
+        box-shadow: 0 15px 40px #1bb69a35;
       }
       .meta {
         margin-top: 14px;
@@ -286,7 +291,7 @@
     <main>
       <section class="hero">
         <div>
-          <span class="eyebrow"><i></i> Windows Preview 0.3.8</span>
+          <span class="eyebrow"><i></i> Windows 0.3.8 · Android p17</span>
           <h1>听得清，<br /><span>分享得更快。</span></h1>
           <p>
             为游戏与小团队打造的实时语音社区。原生 Mumble Opus
@@ -298,9 +303,13 @@
               class="download"
               href="https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-0.3.8-x64-Setup.exe"
               >↓ 下载 Windows 版</a
+            ><a
+              class="download android"
+              href="https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk"
+              >↓ 下载 Android 版</a
             ><a class="ghost" href="#features">了解更多</a>
           </div>
-          <div class="meta">Windows 10/11 · x64 · 支持应用内在线更新</div>
+          <div class="meta">Windows 10/11 x64 · Android 8+ arm64 · 支持应用内在线更新</div>
         </div>
         <div class="mock">
           <div class="rail">

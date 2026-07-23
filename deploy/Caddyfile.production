@@ -1,0 +1,62 @@
+{
+  default_sni {$NIZ_PUBLIC_IP}
+}
+
+http://{$NIZ_PUBLIC_IP} {
+  handle /.well-known/acme-challenge/* {
+    root * /var/www/acme
+    file_server
+  }
+  handle {
+    redir https://{$NIZ_PUBLIC_IP}{uri} permanent
+  }
+}
+
+https://{$NIZ_PUBLIC_IP} {
+  tls /etc/letsencrypt/live/{$NIZ_PUBLIC_IP}/fullchain.pem /etc/letsencrypt/live/{$NIZ_PUBLIC_IP}/privkey.pem
+  encode zstd gzip
+  handle /download {
+    redir /download/ permanent
+  }
+  handle_path /download/* {
+    root * /srv/niz-download
+    try_files {path} /index.html
+    file_server
+  }
+  handle_path /releases/* {
+    root * /srv/niz-releases
+    file_server
+  }
+  handle /dmx {
+    redir * /dmx/ permanent
+  }
+  handle_path /dmx/* {
+    reverse_proxy 127.0.0.1:18180
+  }
+
+  # POIO is the public product path used by all new clients.
+  handle /poio {
+    redir * /poio/download/ permanent
+  }
+  handle /poio/ {
+    redir * /poio/download/ permanent
+  }
+  handle_path /poio/* {
+    reverse_proxy 127.0.0.1:17920
+  }
+
+  # Temporary compatibility for already-installed legacy clients. This route
+  # is intentionally not linked or displayed on the public website.
+  handle /echodeck {
+    redir * /poio/download/ permanent
+  }
+  handle /echodeck/ {
+    redir * /poio/download/ permanent
+  }
+  handle_path /echodeck/* {
+    reverse_proxy 127.0.0.1:17920
+  }
+  handle {
+    reverse_proxy 127.0.0.1:17890
+  }
+}

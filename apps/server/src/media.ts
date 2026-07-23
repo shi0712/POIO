@@ -96,6 +96,15 @@ export async function consume(socketId: string, transportId: string, producerId:
 }
 
 export async function resumeConsumer(socketId: string, consumerId: string) { await peers.get(socketId)?.consumers.get(consumerId)?.resume(); }
+export async function setPreferredLayers(socketId:string,consumerId:string,spatialLayer:number,temporalLayer?:number) {
+  const consumer=peers.get(socketId)?.consumers.get(consumerId);
+  if(!consumer)throw new Error('媒体消费者不存在');
+  if(consumer.kind!=='video')throw new Error('只有视频可以切换画质');
+  if(consumer.type!=='simulcast'&&consumer.type!=='svc')return {consumerId,preferredLayers:undefined,currentLayers:consumer.currentLayers};
+  const preferredLayers={spatialLayer,temporalLayer};
+  await consumer.setPreferredLayers(preferredLayers);
+  return {consumerId,preferredLayers:consumer.preferredLayers,currentLayers:consumer.currentLayers};
+}
 export function closeProducer(socketId: string, producerId: string) {
   const peer = peers.get(socketId); const producer = peer?.producers.get(producerId);
   if (!peer || !producer) return;

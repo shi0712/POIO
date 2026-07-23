@@ -21,3 +21,11 @@ mumble-certs/
 *.crt
 .DS_Store
 Thumbs.db
+.tooling/
+.gradle/
+.idea/
+local.properties
+apps/android/**/build/
+apps/android/**/.cxx/
+apps/android/**/.externalNativeBuild/
+apps/android/captures/
