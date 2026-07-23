@@ -1,8 +1,8 @@
 {
-  "versionCode": 18,
-  "versionName": "0.1.0-p17",
+  "versionCode": 19,
+  "versionName": "0.1.0-p18",
   "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
-  "sha256": "C5E70F6B32DBE3F021FAB713E634DF271ADD00525E0229FBAE705A8FA83D9E09",
+  "sha256": "ADED523F8B9EC3545CC575A6BEF6DB1ADB0514AD71E27672A44AE89E359B4060",
   "size": 44077596,
-  "notes": "修复点击退出语音后仍保持连接：本地状态与 Mumble 原生音频立即断开，服务器在线状态和屏幕接收会话在后台并行清理。"
+  "notes": "屏幕共享入口改为语音房间顶部置顶：新共享自动展开、显示真实共享者，收起后仍保留观看入口；WebRTC 消费失败时可直接重新加载。"
 }

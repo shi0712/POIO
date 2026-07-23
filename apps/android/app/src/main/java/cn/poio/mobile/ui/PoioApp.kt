@@ -1250,6 +1250,9 @@ private fun VoiceRoom(
     val connected = voiceState as? VoiceState.Connected
     val hasSharedScreen = (screenState as? ScreenReceiverState.Watching)
         ?.tracks?.any { it.mediaTag == "screen" && it.track is VideoTrack } == true
+    LaunchedEffect(hasSharedScreen) {
+        if (hasSharedScreen) showScreen = true
+    }
 
     Box(
         modifier.fillMaxSize().background(Color(0xFF151719))
@@ -1290,6 +1293,14 @@ private fun VoiceRoom(
                     )
                 }
             }
+            ScreenStage(
+                state = screenState,
+                members = members,
+                expanded = showScreen,
+                onExpandedChange = { showScreen = it },
+                onQuality = onScreenQuality,
+                onRetry = onRetryScreen,
+            )
             if (members.isEmpty()) {
                 Box(
                     Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(22.dp))
@@ -1374,7 +1385,6 @@ private fun VoiceRoom(
                 }
             }
             serverVersion?.let { Text("POIO $it · Mumble 原生语音", color = MaterialTheme.colorScheme.secondary, fontSize = 12.sp) }
-            if (showScreen) ScreenStage(screenState, onScreenQuality, onRetryScreen)
             when (voiceState) {
                 is VoiceState.Failed -> {
                     Column(
@@ -1546,16 +1556,51 @@ private fun RowScope.MobileVoiceControl(
 @Composable
 private fun ScreenStage(
     state: ScreenReceiverState,
+    members: List<User>,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     onQuality: (ScreenQuality) -> Unit,
     onRetry: () -> Unit,
 ) {
     when (state) {
         ScreenReceiverState.Idle -> Unit
-        ScreenReceiverState.Connecting -> Text("正在连接屏幕共享…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ScreenReceiverState.Connecting -> {
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xFF23252A)).padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                Column {
+                    Text("正在准备屏幕共享", fontWeight = FontWeight.Bold)
+                    Text(
+                        "连接成功后会自动显示共享画面",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+        }
         is ScreenReceiverState.Failed -> {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(state.message, color = MaterialTheme.colorScheme.error)
-                Button(onClick = onRetry) {
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xFF2C2023)).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(Icons.Default.DesktopWindows, null, tint = MaterialTheme.colorScheme.error)
+                    Text("屏幕共享已断开", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                }
+                Text(
+                    state.message,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Refresh, null)
                     Spacer(Modifier.width(8.dp))
                     Text("重新加载屏幕共享")
@@ -1564,15 +1609,67 @@ private fun ScreenStage(
         }
         is ScreenReceiverState.Watching -> {
             val videos = state.tracks.filter { it.mediaTag == "screen" && it.track is VideoTrack }
-            if (videos.isEmpty()) {
-                Text("当前无人共享屏幕", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                videos.forEach { track -> RemoteScreen(track, state.quality, onQuality) }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ScreenQuality.entries.forEach { quality ->
-                        val label = screenQualityLabel(quality)
-                        if (state.quality == quality) Button(onClick = { onQuality(quality) }) { Text(label) }
-                        else OutlinedButton(onClick = { onQuality(quality) }) { Text(label) }
+            if (videos.isNotEmpty()) {
+                Column(
+                    Modifier.fillMaxWidth()
+                        .border(1.dp, Color(0xFF52E000), RoundedCornerShape(20.dp))
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color(0xFF202522)).padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    val firstOwner = screenShareOwnerName(videos.first().userId, members)
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Box(
+                            Modifier.size(40.dp).clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF52E000)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Default.DesktopWindows, null, tint = Color(0xFF101510))
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text("$firstOwner 正在共享屏幕", fontWeight = FontWeight.Bold)
+                            Text(
+                                if (expanded) "点击画面或按钮进入全屏" else "共享仍在进行，点击立即观看",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                            )
+                        }
+                        TextButton(onClick = { onExpandedChange(!expanded) }) {
+                            Text(if (expanded) "收起" else "观看")
+                        }
+                    }
+                    if (expanded) {
+                        videos.forEach { track ->
+                            RemoteScreen(
+                                remote = track,
+                                ownerName = screenShareOwnerName(track.userId, members),
+                                quality = state.quality,
+                                onQuality = onQuality,
+                            )
+                        }
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            ScreenQuality.entries.forEach { quality ->
+                                val label = screenQualityLabel(quality)
+                                if (state.quality == quality) {
+                                    Button(
+                                        onClick = { onQuality(quality) },
+                                        modifier = Modifier.weight(1f),
+                                    ) { Text(label, maxLines = 1) }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = { onQuality(quality) },
+                                        modifier = Modifier.weight(1f),
+                                    ) { Text(label, maxLines = 1) }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1583,6 +1680,7 @@ private fun ScreenStage(
 @Composable
 private fun RemoteScreen(
     remote: RemoteScreenTrack,
+    ownerName: String,
     quality: ScreenQuality,
     onQuality: (ScreenQuality) -> Unit,
 ) {
@@ -1596,7 +1694,7 @@ private fun RemoteScreen(
         onDispose { activity.requestedOrientation = previousOrientation }
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("${remote.userId.take(6)} 的屏幕", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("$ownerName 的屏幕", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Box(
             Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp))
                 .background(Color.Black).clickable { fullscreen = true },
@@ -1617,6 +1715,9 @@ private fun RemoteScreen(
         }
     }
 }
+
+internal fun screenShareOwnerName(userId: String, members: List<User>): String =
+    members.firstOrNull { it.id == userId }?.username?.takeIf { it.isNotBlank() } ?: "频道成员"
 
 @Composable
 private fun FullscreenScreenViewer(

@@ -278,7 +278,15 @@ class MediasoupScreenReceiver(
     private fun registerProducerListeners() {
         signaling.on("media:newProducer") { args ->
             val producer = args.firstOrNull() as? JSONObject ?: return@on
-            scope.launch { consume(producer) }
+            scope.launch {
+                runCatching { consume(producer) }.onFailure { error ->
+                    if (channelId.isNotEmpty()) {
+                        mutableState.value = ScreenReceiverState.Failed(
+                            error.message ?: "无法加载新的屏幕共享",
+                        )
+                    }
+                }
+            }
         }
         signaling.on("media:producerClosed") { args ->
             val producerId = (args.firstOrNull() as? JSONObject)?.optString("producerId") ?: return@on
