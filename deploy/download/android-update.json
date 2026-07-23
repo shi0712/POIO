@@ -1,8 +1,8 @@
 {
-  "versionCode": 21,
-  "versionName": "0.1.0-p20",
+  "versionCode": 22,
+  "versionName": "0.1.0-p21",
   "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
-  "sha256": "7D8B1834876AAE4F4AFC8BA68C6E78DC0C06A473F3381AA516323C12A9E38527",
-  "size": 44093980,
-  "notes": "离线状态改为 POIO 顶部状态卡，不再弹出 Socket.IO 原始异常；网络恢复后自动同步频道；Mumble 重连会清理同账号残留会话，缩短 user already in use / TLS 等待；观看屏幕共享可独立关闭共享声音。"
+  "sha256": "05D7CE2B34CCFD5F878AA3111089880EE0ACD1706A3BD89FE6D2EC39BB5065FA",
+  "size": 44110364,
+  "notes": "语音房间右上角新增频道消息入口，可在不断开语音的情况下查看和发送消息、图片、文件、Markdown 与代码块；同时包含 p20 的离线状态卡、Mumble 残留会话清理和共享声音开关。"
 }

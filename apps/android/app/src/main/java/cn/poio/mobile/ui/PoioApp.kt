@@ -399,6 +399,8 @@ private fun HomeScreen(
                 }
                 else -> VoiceRoom(
                     channel = channel,
+                    messages = state.messages,
+                    busy = state.busy,
                     serverVersion = state.capabilities?.serverVersion,
                     currentUserId = state.user?.id,
                     members = state.voiceMembers[channel.id].orEmpty(),
@@ -414,6 +416,8 @@ private fun HomeScreen(
                     onDeafen = actions::setDeafened,
                     onRoute = actions::selectVoiceRoute,
                     onUserVolume = actions::setUserVolume,
+                    onSendMessage = actions::sendMessage,
+                    onAttachMessage = actions::sendAttachment,
                     onBack = { channelOpen = false },
                     onSettings = { settingsDialog = true },
                     modifier = Modifier.padding(padding),
@@ -1315,8 +1319,11 @@ private fun AndroidUpdateProgressBanner(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun VoiceRoom(
     channel: Channel,
+    messages: List<ChatMessage>,
+    busy: Boolean,
     serverVersion: String?,
     currentUserId: String?,
     members: List<cn.poio.mobile.model.User>,
@@ -1332,18 +1339,60 @@ private fun VoiceRoom(
     onDeafen: (Boolean) -> Unit,
     onRoute: (Int) -> Unit,
     onUserVolume: (Int, Int) -> Unit,
+    onSendMessage: (String) -> Unit,
+    onAttachMessage: (android.net.Uri, String) -> Unit,
     onBack: () -> Unit,
     onSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showRoutes by remember { mutableStateOf(false) }
     var showScreen by remember { mutableStateOf(true) }
+    var showChat by rememberSaveable(channel.id) { mutableStateOf(false) }
     var volumeTarget by remember { mutableStateOf<Pair<cn.poio.mobile.model.User, Int>?>(null) }
     val connected = voiceState as? VoiceState.Connected
     val hasSharedScreen = (screenState as? ScreenReceiverState.Watching)
         ?.tracks?.any { it.mediaTag == "screen" && it.track is VideoTrack } == true
     LaunchedEffect(hasSharedScreen) {
         if (hasSharedScreen) showScreen = true
+    }
+
+    if (showChat) {
+        Scaffold(
+            modifier = modifier.fillMaxSize(),
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(channel.name, fontWeight = FontWeight.Bold)
+                            Text(
+                                "语音频道聊天",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp,
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = { showChat = false }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回语音频道")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color(0xFF151719),
+                    ),
+                )
+            },
+            containerColor = Color(0xFF151719),
+            contentWindowInsets = WindowInsets(0),
+        ) { chatPadding ->
+            ChatScreen(
+                messages = messages,
+                busy = busy,
+                onSend = onSendMessage,
+                onAttach = onAttachMessage,
+                modifier = Modifier.padding(chatPadding),
+            )
+        }
+        return
     }
 
     Box(
@@ -1358,6 +1407,9 @@ private fun VoiceRoom(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回社区") }
                 Text("自由模式", Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = FontWeight.Bold)
+                IconButton(onClick = { showChat = true }) {
+                    Icon(Icons.Default.ChatBubbleOutline, "频道消息")
+                }
                 IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "语音设置") }
             }
             Text("语音频道", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
