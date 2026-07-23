@@ -184,28 +184,34 @@ class NativeMumbleVoiceEngine(context: Context) : VoiceEngine {
         if (publishIdle) mutableState.value = VoiceState.Idle
     }
 
-    override suspend fun setMuted(muted: Boolean) = updateConnected { current ->
-        desiredMuted = muted
-        val effective = effectiveVoiceControls(desiredMuted, desiredDeafened, focusSuppressed)
-        NativeBridge.setMuted(handle, effective.muted)
-        current.copy(
-            muted = effective.muted,
-            deafened = effective.deafened,
-            focusSuppressed = focusSuppressed,
-        )
+    override suspend fun setMuted(muted: Boolean) {
+        updateConnected { current ->
+            desiredMuted = muted
+            val effective = effectiveVoiceControls(desiredMuted, desiredDeafened, focusSuppressed)
+            NativeBridge.setMuted(handle, effective.muted)
+            current.copy(
+                muted = effective.muted,
+                deafened = effective.deafened,
+                focusSuppressed = focusSuppressed,
+            )
+        }
+        refreshForegroundNotification()
     }
 
-    override suspend fun setDeafened(deafened: Boolean) = updateConnected { current ->
-        desiredDeafened = deafened
-        if (deafened) desiredMuted = true
-        val effective = effectiveVoiceControls(desiredMuted, desiredDeafened, focusSuppressed)
-        NativeBridge.setDeafened(handle, effective.deafened)
-        NativeBridge.setMuted(handle, effective.muted)
-        current.copy(
-            deafened = effective.deafened,
-            muted = effective.muted,
-            focusSuppressed = focusSuppressed,
-        )
+    override suspend fun setDeafened(deafened: Boolean) {
+        updateConnected { current ->
+            desiredDeafened = deafened
+            if (deafened) desiredMuted = true
+            val effective = effectiveVoiceControls(desiredMuted, desiredDeafened, focusSuppressed)
+            NativeBridge.setDeafened(handle, effective.deafened)
+            NativeBridge.setMuted(handle, effective.muted)
+            current.copy(
+                deafened = effective.deafened,
+                muted = effective.muted,
+                focusSuppressed = focusSuppressed,
+            )
+        }
+        refreshForegroundNotification()
     }
 
     override suspend fun setUserVolume(sessionId: Int, volume: Int) = withContext(Dispatchers.IO) {
@@ -396,6 +402,7 @@ class NativeMumbleVoiceEngine(context: Context) : VoiceEngine {
                 deafened = effective.deafened,
                 focusSuppressed = focusSuppressed,
             )
+            refreshForegroundNotification()
         }
     }
 
@@ -501,7 +508,7 @@ class NativeMumbleVoiceEngine(context: Context) : VoiceEngine {
         NativeBridge.setDeafened(connectedHandle, effective.deafened)
         NativeBridge.setMuted(connectedHandle, effective.muted)
         if (!foregroundServiceActive) {
-            VoiceForegroundService.start(appContext, credentials.channelName)
+            VoiceForegroundService.start(appContext, credentials.channelName, effective.muted)
             foregroundServiceActive = true
         }
         val (routes, selectedRouteId) = routeSnapshot()
@@ -514,6 +521,12 @@ class NativeMumbleVoiceEngine(context: Context) : VoiceEngine {
             selectedRouteId = selectedRouteId,
         )
         NativeBridge.requestUserSessions(connectedHandle)
+    }
+
+    private fun refreshForegroundNotification() {
+        if (!foregroundServiceActive) return
+        val current = mutableState.value as? VoiceState.Connected ?: return
+        VoiceForegroundService.update(appContext, current.channelName, current.muted)
     }
 
     private suspend fun reconnectLoop(credentials: MumbleCredentials, generation: Long, originalMessage: String) {

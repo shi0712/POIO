@@ -1,8 +1,8 @@
 {
-  "versionCode": 19,
-  "versionName": "0.1.0-p18",
+  "versionCode": 20,
+  "versionName": "0.1.0-p19",
   "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
-  "sha256": "ADED523F8B9EC3545CC575A6BEF6DB1ADB0514AD71E27672A44AE89E359B4060",
-  "size": 44077596,
-  "notes": "屏幕共享入口改为语音房间顶部置顶：新共享自动展开、显示真实共享者，收起后仍保留观看入口；WebRTC 消费失败时可直接重新加载。"
+  "sha256": "CC72E45BE1050826A122DFEF243C00DA168695A9B52169F444CB1A38266A3D54",
+  "size": 44138325,
+  "notes": "后台语音改为 Application 级真实运行时：关闭或重建界面后仍保持 Mumble 与 Socket 连接；通知新增闭麦/打开麦克风和退出语音操作，并在断网后恢复频道在线状态。"
 }

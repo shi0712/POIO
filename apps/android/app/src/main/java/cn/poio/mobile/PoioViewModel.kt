@@ -4,14 +4,11 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import cn.poio.mobile.data.PoioRepository
-import cn.poio.mobile.session.SecureSessionStore
 import cn.poio.mobile.screen.MediasoupScreenReceiver
 import cn.poio.mobile.screen.ScreenReceiverState
 import cn.poio.mobile.screen.ScreenQuality
 import cn.poio.mobile.screen.screenReceiverChannel
 import cn.poio.mobile.screen.screenReconnectDelayMillis
-import cn.poio.mobile.voice.NativeMumbleVoiceEngine
 import cn.poio.mobile.voice.MicrophoneTester
 import cn.poio.mobile.voice.MicrophoneTestState
 import cn.poio.mobile.voice.VoiceDeviceState
@@ -26,8 +23,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class PoioViewModel(application: Application) : AndroidViewModel(application), PoioActions {
-    private val repository = PoioRepository(viewModelScope, SecureSessionStore(application), application.contentResolver)
-    private val voiceEngine = NativeMumbleVoiceEngine(application)
+    private val poioApplication = application as PoioApplication
+    private val repository = poioApplication.repository
+    private val voiceEngine = poioApplication.voiceEngine
     private val microphoneTester = MicrophoneTester(application)
     private val screenReceiver = MediasoupScreenReceiver(application, repository.client)
     private val updateManager = AndroidUpdateManager(application, viewModelScope)
@@ -42,7 +40,6 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
     private var screenRecoveryAttempt = 0
 
     init {
-        repository.start()
         updateManager.start()
         viewModelScope.launch {
             var observedGeneration = 0L
@@ -55,9 +52,23 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
                 if (generation <= observedGeneration) return@collect
                 val reconnecting = observedGeneration > 0
                 observedGeneration = generation
-                if (!reconnecting) return@collect
-                recoveryJob?.cancel()
-                recoveryJob = viewModelScope.launch { recoverAfterSocketReconnect() }
+                if (reconnecting) {
+                    recoveryJob?.cancel()
+                    recoveryJob = viewModelScope.launch { recoverScreenAfterSocketReconnect() }
+                }
+            }
+        }
+        viewModelScope.launch {
+            var initialized = false
+            var observedTarget: String? = null
+            state.collect { current ->
+                val target = screenReceiverChannel(current.selectedChannel, current.voiceChannelId)
+                if (initialized && target == observedTarget) return@collect
+                initialized = true
+                observedTarget = target
+                runCatching {
+                    if (target != null) screenReceiver.join(target) else screenReceiver.leave()
+                }.onFailure(repository::reportError)
             }
         }
         viewModelScope.launch {
@@ -88,16 +99,10 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
 
     override fun logout() { viewModelScope.launch { leaveVoiceInternal(); repository.logout() } }
     override fun selectSpace(id: String) {
-        viewModelScope.launch {
-            repository.selectSpace(id)
-            syncScreenReceiver()
-        }
+        viewModelScope.launch { repository.selectSpace(id) }
     }
     override fun selectChannel(id: String) {
-        viewModelScope.launch {
-            repository.selectChannel(id)
-            syncScreenReceiver()
-        }
+        viewModelScope.launch { repository.selectChannel(id) }
     }
     override fun sendMessage(body: String) { viewModelScope.launch { repository.sendMessage(body) } }
     override fun sendAttachment(uri: Uri, body: String) { viewModelScope.launch { repository.sendAttachment(uri, body) } }
@@ -114,7 +119,6 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
                 val credentials = repository.voiceCredentials(channelId)
                 voiceEngine.connect(credentials)
                 repository.announceVoiceJoin(channelId)
-                syncScreenReceiver()
             }.onFailure { error ->
                 runCatching { screenReceiver.leave() }
                 runCatching { voiceEngine.disconnect() }
@@ -166,9 +170,7 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
         screenRecoveryJob?.cancel()
         microphoneTester.close()
         screenReceiver.close()
-        voiceEngine.dispose()
         updateManager.close()
-        repository.close()
         super.onCleared()
     }
 
@@ -186,14 +188,6 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
 
     private suspend fun runVoiceAction(action: suspend () -> Unit) {
         runCatching { action() }.onFailure(repository::reportError)
-    }
-
-    private suspend fun syncScreenReceiver() {
-        val snapshot = state.value
-        val targetChannelId = screenReceiverChannel(snapshot.selectedChannel, snapshot.voiceChannelId)
-        runCatching {
-            if (targetChannelId != null) screenReceiver.join(targetChannelId) else screenReceiver.leave()
-        }.onFailure(repository::reportError)
     }
 
     private fun scheduleScreenRecovery() {
@@ -222,11 +216,7 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
         if (reportError) result.onFailure(repository::reportError)
     }
 
-    private suspend fun recoverAfterSocketReconnect() {
-        val snapshot = state.value
-        snapshot.voiceChannelId?.let { channelId ->
-            runCatching { repository.announceVoiceJoin(channelId) }.onFailure(repository::reportError)
-        }
+    private suspend fun recoverScreenAfterSocketReconnect() {
         val selectedChannel = state.value.selectedChannel
         val targetChannelId = screenReceiverChannel(selectedChannel, state.value.voiceChannelId)
         if (targetChannelId != null) {

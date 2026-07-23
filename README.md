@@ -12,7 +12,7 @@
   <a href="https://www.modelscope.cn/models/sjw712/POIO/files">ModelScope 镜像</a>
 </p>
 
-> 当前版本：Windows **0.3.8 Preview**、Android **0.1.0-p18**。Windows 安装包尚未进行代码签名，首次运行时可能显示 SmartScreen 提示；Android 当前提供 arm64 APK。
+> 当前版本：Windows **0.3.8 Preview**、Android **0.1.0-p19**。Windows 安装包尚未进行代码签名，首次运行时可能显示 SmartScreen 提示；Android 当前提供 arm64 APK。
 
 ## 已实现功能
 
