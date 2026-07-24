@@ -29,7 +29,7 @@ type MumbleRuntimeState = { state:'disconnected'|'connecting'|'connected'|'recon
 type MumbleAudioDevice = { index:number;name:string;selected:boolean };
 type MumbleAudioDevices = { inputBackend?:string;outputBackend?:string;inputs:MumbleAudioDevice[];outputs:MumbleAudioDevice[] };
 type MumbleUserVolume = { username:string;volume:number;talking:boolean };
-type AppUpdateStatus = { state:'idle'|'checking'|'available'|'downloading'|'downloaded'|'up-to-date'|'error'|'development';version?:string;percent?:number;message?:string };
+type AppUpdateStatus = { state:'idle'|'checking'|'available'|'downloading'|'downloaded'|'up-to-date'|'error'|'development';version?:string;percent?:number;message?:string;notes?:string };
 let appUpdateStatus:AppUpdateStatus={state:'idle'};
 let mumbleRuntimeState:MumbleRuntimeState={state:'disconnected'};
 let lastAppUpdateCheck=0;
@@ -307,6 +307,15 @@ function publishUpdateStatus(status:AppUpdateStatus) {
   return status;
 }
 
+function releaseNotesText(value:unknown) {
+  if(typeof value==='string')return value.trim()||undefined;
+  if(Array.isArray(value)){
+    const notes=value.map(item=>typeof item==='string'?item:typeof item==='object'&&item&&'note' in item?String(item.note):'').filter(Boolean);
+    return notes.join('\n\n').trim()||undefined;
+  }
+  return undefined;
+}
+
 async function checkForAppUpdate() {
   lastAppUpdateCheck=Date.now();
   if(!app.isPackaged)return publishUpdateStatus({state:'development',message:'开发模式不检查更新'});
@@ -314,17 +323,29 @@ async function checkForAppUpdate() {
   try{await autoUpdater.checkForUpdates();return appUpdateStatus}catch(error){return publishUpdateStatus({state:'error',message:error instanceof Error?error.message:'检查更新失败'})}
 }
 
+async function downloadAppUpdate() {
+  if(!app.isPackaged)return publishUpdateStatus({state:'development',message:'开发模式不下载更新'});
+  if(appUpdateStatus.state==='downloaded'||appUpdateStatus.state==='downloading')return appUpdateStatus;
+  if(appUpdateStatus.state!=='available'){
+    const checked=await checkForAppUpdate();
+    if(checked.state!=='available')return checked;
+  }
+  const pending=appUpdateStatus;
+  publishUpdateStatus({...pending,state:'downloading',percent:0});
+  try{await autoUpdater.downloadUpdate();return appUpdateStatus}catch(error){return publishUpdateStatus({...pending,state:'error',message:error instanceof Error?error.message:'下载更新失败'})}
+}
+
 function initializeAutoUpdates() {
   if(!app.isPackaged){publishUpdateStatus({state:'development',message:'开发模式不检查更新'});return}
-  autoUpdater.autoDownload=true;
+  autoUpdater.autoDownload=false;
   autoUpdater.autoInstallOnAppQuit=true;
   autoUpdater.allowPrerelease=false;
-  autoUpdater.setFeedURL({provider:'generic',url:'https://115.159.222.29/echodeck/releases/'});
+  autoUpdater.setFeedURL({provider:'generic',url:'https://115.159.222.29/poio/releases/'});
   autoUpdater.on('checking-for-update',()=>publishUpdateStatus({state:'checking'}));
-  autoUpdater.on('update-available',info=>publishUpdateStatus({state:'available',version:info.version}));
+  autoUpdater.on('update-available',info=>publishUpdateStatus({state:'available',version:info.version,notes:releaseNotesText(info.releaseNotes)}));
   autoUpdater.on('update-not-available',info=>publishUpdateStatus({state:'up-to-date',version:info.version}));
-  autoUpdater.on('download-progress',progress=>publishUpdateStatus({state:'downloading',percent:Math.round(progress.percent)}));
-  autoUpdater.on('update-downloaded',info=>publishUpdateStatus({state:'downloaded',version:info.version,percent:100}));
+  autoUpdater.on('download-progress',progress=>publishUpdateStatus({...appUpdateStatus,state:'downloading',percent:Math.round(progress.percent)}));
+  autoUpdater.on('update-downloaded',info=>publishUpdateStatus({state:'downloaded',version:info.version,percent:100,notes:releaseNotesText(info.releaseNotes)??appUpdateStatus.notes}));
   autoUpdater.on('error',error=>publishUpdateStatus({state:'error',message:error.message}));
   const maybeCheck=()=>{
     if(Date.now()-lastAppUpdateCheck<5*60_000||['checking','available','downloading','downloaded'].includes(appUpdateStatus.state))return;
@@ -448,6 +469,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('mumble:set-output', (_event,index:number) => setMumbleAudioDevice('output',index));
   ipcMain.handle('update:status', () => appUpdateStatus);
   ipcMain.handle('update:check', () => checkForAppUpdate());
+  ipcMain.handle('update:download', () => downloadAppUpdate());
   ipcMain.handle('update:install', () => { if(appUpdateStatus.state==='downloaded')autoUpdater.quitAndInstall(false,true); });
   ipcMain.handle('diagnostics:get', () => buildDiagnostics());
   await createMainWindow();

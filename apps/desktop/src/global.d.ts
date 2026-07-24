@@ -5,14 +5,14 @@ declare global {
   type MumbleAudioDevices = { inputBackend?:string;outputBackend?:string;inputs:MumbleAudioDevice[];outputs:MumbleAudioDevice[] };
   type MumbleUserVolume = { username:string;volume:number;talking:boolean };
   type MumbleRuntimeState = { state:'disconnected'|'connecting'|'connected'|'reconnecting'|'error';attempt?:number;message?:string };
-  type AppUpdateStatus = { state:'idle'|'checking'|'available'|'downloading'|'downloaded'|'up-to-date'|'error'|'development';version?:string;percent?:number;message?:string };
+  type AppUpdateStatus = { state:'idle'|'checking'|'available'|'downloading'|'downloaded'|'up-to-date'|'error'|'development';version?:string;percent?:number;message?:string;notes?:string };
   interface Window {
     echodeck?: {
       window: { minimize(): Promise<void>; maximize(): Promise<void>; close(): Promise<void> };
       getDesktopSources(): Promise<Array<{id:string;name:string;thumbnail:string;appIcon?:string}>>;
       captureScreenshot(): Promise<{dataUrl:string;width:number;height:number;displayName:string}>;
       diagnostics(): Promise<string>;
-      update: { status():Promise<AppUpdateStatus>;check():Promise<AppUpdateStatus>;install():Promise<void>;onStatus(callback:(status:AppUpdateStatus)=>void):()=>void };
+      update: { status():Promise<AppUpdateStatus>;check():Promise<AppUpdateStatus>;download():Promise<AppUpdateStatus>;install():Promise<void>;onStatus(callback:(status:AppUpdateStatus)=>void):()=>void };
       mumble: {
         connect(connection:{host:string;port:number;username:string;password:string;channelName:string}):Promise<string>;
         state():Promise<MumbleRuntimeState>;
