@@ -21,7 +21,7 @@ declare global {
         connect(connection:{host:string;port:number;username:string;password:string;channelName:string}):Promise<string>;
         state():Promise<MumbleRuntimeState>;
         onState(callback:(status:MumbleRuntimeState)=>void):()=>void;
-        onControls(callback:(status:{muted:boolean;deafened:boolean})=>void):()=>void;
+        onControls(callback:(status:{muted:boolean;deafened:boolean;transmitting:boolean;pushToTalkActive:boolean})=>void):()=>void;
         command(command:string):Promise<string>;
         disconnect():Promise<void>;
         level():Promise<number>;

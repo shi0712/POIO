@@ -1,0 +1,88 @@
+diff --git a/src/mumble/main.cpp b/src/mumble/main.cpp
+index 264c433..a118f41 100644
+--- a/src/mumble/main.cpp
++++ b/src/mumble/main.cpp
+@@ -253,6 +253,15 @@ extern "C" __declspec(dllexport) int EchoDeck_GetInputLevel() {
+ 	return static_cast< int >(normalized * 1000.0f);
+ }
+ 
++extern "C" __declspec(dllexport) int EchoDeck_IsTransmitting() {
++	const auto audioInput = Global::get().ai;
++	return audioInput && audioInput->isTransmitting() ? 1 : 0;
++}
++
++extern "C" __declspec(dllexport) int EchoDeck_IsPushToTalkActive() {
++	return Global::get().iPushToTalk > 0 ? 1 : 0;
++}
++
+ extern "C" __declspec(dllexport) int EchoDeck_ConfigureRuntime() {
+ 	QCoreApplication *application = QCoreApplication::instance();
+ 	if (!application) {
+diff --git a/plugins/echodeckBridge/echodeckBridge.cpp b/plugins/echodeckBridge/echodeckBridge.cpp
+index 889fcfe..fdd6e02 100644
+--- a/plugins/echodeckBridge/echodeckBridge.cpp
++++ b/plugins/echodeckBridge/echodeckBridge.cpp
+@@ -51,6 +51,8 @@ std::wstring pipeName() {
+ using GetAudioDevicesFn = const char *(*)();
+ using SetAudioDeviceFn  = int (*)(int, int);
+ using GetInputLevelFn   = int (*)();
++using IsTransmittingFn  = int (*)();
++using IsPushToTalkActiveFn = int (*)();
+ using GetVolumeFn       = int (*)(int);
+ using SetVolumeFn       = int (*)(int, int);
+ using GetUsersFn        = const char *(*)();
+@@ -86,6 +88,27 @@ GetInputLevelFn getInputLevelFunction() {
+ 	return function;
+ }
+ 
++IsTransmittingFn isTransmittingFunction() {
++	static IsTransmittingFn function = []() {
++		const HMODULE executable = GetModuleHandleW(nullptr);
++		return executable
++				   ? reinterpret_cast< IsTransmittingFn >(GetProcAddress(executable, "EchoDeck_IsTransmitting"))
++				   : nullptr;
++	}();
++	return function;
++}
++
++IsPushToTalkActiveFn isPushToTalkActiveFunction() {
++	static IsPushToTalkActiveFn function = []() {
++		const HMODULE executable = GetModuleHandleW(nullptr);
++		return executable
++				   ? reinterpret_cast< IsPushToTalkActiveFn >(
++						 GetProcAddress(executable, "EchoDeck_IsPushToTalkActive"))
++				   : nullptr;
++	}();
++	return function;
++}
++
+ GetVolumeFn getVolumeFunction() {
+ 	static GetVolumeFn function = []() {
+ 		const HMODULE executable = GetModuleHandleW(nullptr);
+@@ -214,13 +237,25 @@ std::string executeCommand(const std::string &line) {
+ 	if (line == "STATUS") {
+ 		bool muted = false;
+ 		bool deafened = false;
++		bool transmitting = false;
++		bool pushToTalkActive = false;
+ 		mumble_connection_t connection{};
+ 		const auto connectionStatus = g_api.getActiveServerConnection(g_pluginID, &connection);
+ 		const auto muteStatus = g_api.isLocalUserMuted(g_pluginID, &muted);
+ 		const auto deafStatus = g_api.isLocalUserDeafened(g_pluginID, &deafened);
++#ifdef OS_WINDOWS
++		if (const auto function = isTransmittingFunction()) {
++			transmitting = function() == 1;
++		}
++		if (const auto function = isPushToTalkActiveFunction()) {
++			pushToTalkActive = function() == 1;
++		}
++#endif
+ 		return "OK connected=" + std::to_string(connectionStatus == MUMBLE_STATUS_OK)
+ 			   + " muted=" + std::to_string(muteStatus == MUMBLE_STATUS_OK && muted)
+-			   + " deafened=" + std::to_string(deafStatus == MUMBLE_STATUS_OK && deafened);
++			   + " deafened=" + std::to_string(deafStatus == MUMBLE_STATUS_OK && deafened)
++			   + " transmitting=" + std::to_string(transmitting)
++			   + " ptt=" + std::to_string(pushToTalkActive);
+ 	}
+ 	if (line.rfind("MUTE ", 0) == 0) {
+ 		return statusName(g_api.requestLocalUserMute(g_pluginID, line.substr(5) == "1"));

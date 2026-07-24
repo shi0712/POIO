@@ -22,6 +22,8 @@ let mumbleRestartAttempts = 0;
 let appQuitting = false;
 let mumbleMuted = false;
 let mumbleDeafened = false;
+let mumbleTransmitting = false;
+let mumblePushToTalkActive = false;
 const mumblePipeSuffix = process.pid.toString(36);
 const mumblePipe = `${String.raw`\\.\pipe\EchoDeckMumble`}-${mumblePipeSuffix}`;
 
@@ -58,6 +60,16 @@ function publishMumbleState(state:MumbleRuntimeState) {
   return state;
 }
 
+function publishMumbleControls() {
+  sendToMainWindow('mumble:controls',{
+    muted:mumbleMuted,
+    deafened:mumbleDeafened,
+    transmitting:mumbleTransmitting,
+    pushToTalkActive:mumblePushToTalkActive,
+  });
+  updateTrayMenu();
+}
+
 function connectionIdentity(connection:MumbleConnection) {
   return `${connection.username}@${connection.host}:${connection.port}`;
 }
@@ -70,6 +82,9 @@ function stopMumble(clearDesired=true) {
   const child=mumbleProcess;
   mumbleProcess = null;
   mumbleIdentity = '';
+  mumbleTransmitting=false;
+  mumblePushToTalkActive=false;
+  publishMumbleControls();
   if(clearDesired){
     desiredMumbleConnection=undefined;
     mumbleRestartAttempts=0;
@@ -203,6 +218,9 @@ async function connectMumble(connection:MumbleConnection,recovering=false) {
     if(mumbleProcess===child){
       mumbleLastFailure=`进程退出 ${exitCodeDescription(code,signal)}。若错误码为 0xC0000135，请检查安全软件是否隔离了安装目录中的 DLL`;
       mumbleProcess=null;mumbleIdentity='';
+      mumbleTransmitting=false;
+      mumblePushToTalkActive=false;
+      publishMumbleControls();
       scheduleMumbleRestart();
     }
   });
@@ -435,15 +453,18 @@ async function pollMumbleControls() {
   if(!mumbleProcess||mumbleProcess.exitCode!==null)return;
   try{
     const status=await mumbleCommand('STATUS',900);
-    const match=/^OK connected=[01] muted=([01]) deafened=([01])$/.exec(status);
+    const match=/^OK connected=[01] muted=([01]) deafened=([01]) transmitting=([01]) ptt=([01])$/.exec(status);
     if(!match)return;
     const muted=match[1]==='1';
     const deafened=match[2]==='1';
-    if(muted===mumbleMuted&&deafened===mumbleDeafened)return;
+    const transmitting=match[3]==='1';
+    const pushToTalkActive=match[4]==='1';
+    if(muted===mumbleMuted&&deafened===mumbleDeafened&&transmitting===mumbleTransmitting&&pushToTalkActive===mumblePushToTalkActive)return;
     mumbleMuted=muted;
     mumbleDeafened=deafened;
-    sendToMainWindow('mumble:controls',{muted,deafened});
-    updateTrayMenu();
+    mumbleTransmitting=transmitting;
+    mumblePushToTalkActive=pushToTalkActive;
+    publishMumbleControls();
   }catch{}
 }
 
@@ -458,7 +479,8 @@ function showMainWindow() {
 function updateTrayMenu() {
   if(!tray)return;
   const connected=mumbleRuntimeState.state==='connected'||mumbleRuntimeState.state==='reconnecting'||mumbleRuntimeState.state==='connecting';
-  const voiceLabel=mumbleRuntimeState.state==='connected'?'语音已连接':mumbleRuntimeState.state==='reconnecting'?'语音正在重连':mumbleRuntimeState.state==='connecting'?'语音正在连接':'未加入语音频道';
+  const voiceLabel=mumbleTransmitting?'正在说话 · 语音已连接':mumbleRuntimeState.state==='connected'?'语音已连接':mumbleRuntimeState.state==='reconnecting'?'语音正在重连':mumbleRuntimeState.state==='connecting'?'语音正在连接':'未加入语音频道';
+  tray.setToolTip(mumbleTransmitting?'POIO · 正在说话':connected?'POIO · 语音已连接':'POIO · 语音社区');
   tray.setContextMenu(Menu.buildFromTemplate([
     {label:'POIO',enabled:false},
     {label:'打开主窗口',click:showMainWindow},

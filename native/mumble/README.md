@@ -10,6 +10,7 @@ Set-Location mumble
 git checkout a4c981af
 git apply ..\POIO\native\mumble\poio-mumble.patch
 git apply ..\POIO\native\mumble\poio-global-hotkeys.patch
+git apply ..\POIO\native\mumble\poio-transmit-state.patch
 ```
 
 补丁包括：
@@ -19,6 +20,7 @@ git apply ..\POIO\native\mumble\poio-global-hotkeys.patch
 - 麦克风电平、频道成员、说话状态等事件上报。
 - `echodeckBridge` 原生插件及插件加载调整。
 - Mumble 原生全局静音快捷键和真正的按住说话（按下发送、松开停止）。
+- 向 POIO 上报真实语音发送状态和按键说话按下状态，避免把环境音误显示为正在说话。
 - 禁用原生 Mumble 界面中会打断 POIO 体验的静音提示弹窗。
 
 ## 构建与打包
