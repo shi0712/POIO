@@ -9,6 +9,7 @@ git clone https://github.com/mumble-voip/mumble.git
 Set-Location mumble
 git checkout a4c981af
 git apply ..\POIO\native\mumble\poio-mumble.patch
+git apply ..\POIO\native\mumble\poio-global-hotkeys.patch
 ```
 
 补丁包括：
@@ -17,6 +18,7 @@ git apply ..\POIO\native\mumble\poio-mumble.patch
 - 连接、静音/关闭声音、输入输出设备、全局音量与单用户音量控制。
 - 麦克风电平、频道成员、说话状态等事件上报。
 - `echodeckBridge` 原生插件及插件加载调整。
+- Mumble 原生全局静音快捷键和真正的按住说话（按下发送、松开停止）。
 - 禁用原生 Mumble 界面中会打断 POIO 体验的静音提示弹窗。
 
 ## 构建与打包

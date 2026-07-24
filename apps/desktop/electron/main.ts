@@ -31,12 +31,15 @@ type MumbleAudioDevice = { index:number;name:string;selected:boolean };
 type MumbleAudioDevices = { inputBackend?:string;outputBackend?:string;inputs:MumbleAudioDevice[];outputs:MumbleAudioDevice[] };
 type MumbleUserVolume = { username:string;volume:number;talking:boolean };
 type AppUpdateStatus = { state:'idle'|'checking'|'available'|'downloading'|'downloaded'|'up-to-date'|'error'|'development';version?:string;percent?:number;message?:string;notes?:string };
-type DesktopPreferences = { closeToTray:boolean;launchAtLogin:boolean };
-type StoredDesktopPreferences = { closeToTray:boolean;trayHintShown:boolean };
+type VoiceShortcut = { virtualKey:number;modifiers:number;label:string };
+type DesktopPreferences = { closeToTray:boolean;launchAtLogin:boolean;muteShortcut:VoiceShortcut;pushToTalkEnabled:boolean;pushToTalkShortcut:VoiceShortcut };
+type StoredDesktopPreferences = { closeToTray:boolean;trayHintShown:boolean;muteShortcut:VoiceShortcut;pushToTalkEnabled:boolean;pushToTalkShortcut:VoiceShortcut };
+const defaultMuteShortcut:VoiceShortcut={virtualKey:77,modifiers:3,label:'Ctrl + Shift + M'};
+const defaultPushToTalkShortcut:VoiceShortcut={virtualKey:86,modifiers:0,label:'V'};
 let appUpdateStatus:AppUpdateStatus={state:'idle'};
 let mumbleRuntimeState:MumbleRuntimeState={state:'disconnected'};
 let lastAppUpdateCheck=0;
-let desktopPreferences:StoredDesktopPreferences={closeToTray:true,trayHintShown:false};
+let desktopPreferences:StoredDesktopPreferences={closeToTray:true,trayHintShown:false,muteShortcut:defaultMuteShortcut,pushToTalkEnabled:false,pushToTalkShortcut:defaultPushToTalkShortcut};
 
 function sendToMainWindow(channel:string,value:unknown) {
   const window=mainWindow;
@@ -146,7 +149,10 @@ async function waitForMumbleBridge(child:ChildProcess) {
 }
 
 async function activateMumbleAudio() {
-  for(const command of ['CONFIGURE',`DEAF ${mumbleDeafened?1:0}`,`MUTE ${mumbleMuted?1:0}`]){
+  const mute=desktopPreferences.muteShortcut;
+  const pushToTalk=desktopPreferences.pushToTalkShortcut;
+  const hotkeys=`HOTKEYS ${mute.virtualKey} ${mute.modifiers} ${pushToTalk.virtualKey} ${pushToTalk.modifiers} ${desktopPreferences.pushToTalkEnabled?1:0}`;
+  for(const command of ['CONFIGURE',hotkeys,`DEAF ${mumbleDeafened?1:0}`,`MUTE ${mumbleMuted?1:0}`]){
     const result=await mumbleCommand(command);
     if(!result.startsWith('OK'))throw new Error(`恢复 Mumble 音频失败：${result}`);
   }
@@ -369,6 +375,15 @@ function saveDesktopPreferences() {
   writeFileSync(desktopPreferencesPath(),`${JSON.stringify(desktopPreferences,null,2)}\n`,{encoding:'utf8'});
 }
 
+function validShortcut(value:unknown,fallback:VoiceShortcut):VoiceShortcut {
+  if(!value||typeof value!=='object')return fallback;
+  const shortcut=value as Partial<VoiceShortcut>;
+  if(!Number.isInteger(shortcut.virtualKey)||Number(shortcut.virtualKey)<1||Number(shortcut.virtualKey)>255
+    ||!Number.isInteger(shortcut.modifiers)||Number(shortcut.modifiers)<0||Number(shortcut.modifiers)>15
+    ||typeof shortcut.label!=='string'||shortcut.label.length<1||shortcut.label.length>64)return fallback;
+  return {virtualKey:Number(shortcut.virtualKey),modifiers:Number(shortcut.modifiers),label:shortcut.label};
+}
+
 function loadDesktopPreferences() {
   const file=desktopPreferencesPath();
   if(!existsSync(file))return;
@@ -377,6 +392,9 @@ function loadDesktopPreferences() {
     desktopPreferences={
       closeToTray:typeof stored.closeToTray==='boolean'?stored.closeToTray:true,
       trayHintShown:stored.trayHintShown===true,
+      muteShortcut:validShortcut(stored.muteShortcut,defaultMuteShortcut),
+      pushToTalkEnabled:stored.pushToTalkEnabled===true,
+      pushToTalkShortcut:validShortcut(stored.pushToTalkShortcut,defaultPushToTalkShortcut),
     };
   }catch{}
 }
@@ -385,11 +403,17 @@ function getDesktopPreferences():DesktopPreferences {
   return {
     closeToTray:desktopPreferences.closeToTray,
     launchAtLogin:app.isPackaged&&app.getLoginItemSettings().openAtLogin,
+    muteShortcut:desktopPreferences.muteShortcut,
+    pushToTalkEnabled:desktopPreferences.pushToTalkEnabled,
+    pushToTalkShortcut:desktopPreferences.pushToTalkShortcut,
   };
 }
 
-function setDesktopPreferences(patch:Partial<DesktopPreferences>) {
+async function setDesktopPreferences(patch:Partial<DesktopPreferences>) {
   if(typeof patch.closeToTray==='boolean')desktopPreferences.closeToTray=patch.closeToTray;
+  if(patch.muteShortcut)desktopPreferences.muteShortcut=validShortcut(patch.muteShortcut,desktopPreferences.muteShortcut);
+  if(typeof patch.pushToTalkEnabled==='boolean')desktopPreferences.pushToTalkEnabled=patch.pushToTalkEnabled;
+  if(patch.pushToTalkShortcut)desktopPreferences.pushToTalkShortcut=validShortcut(patch.pushToTalkShortcut,desktopPreferences.pushToTalkShortcut);
   if(typeof patch.launchAtLogin==='boolean'&&app.isPackaged){
     app.setLoginItemSettings({
       openAtLogin:patch.launchAtLogin,
@@ -398,7 +422,29 @@ function setDesktopPreferences(patch:Partial<DesktopPreferences>) {
     });
   }
   saveDesktopPreferences();
+  if(mumbleProcess&&mumbleProcess.exitCode===null){
+    const mute=desktopPreferences.muteShortcut;
+    const pushToTalk=desktopPreferences.pushToTalkShortcut;
+    const result=await mumbleCommand(`HOTKEYS ${mute.virtualKey} ${mute.modifiers} ${pushToTalk.virtualKey} ${pushToTalk.modifiers} ${desktopPreferences.pushToTalkEnabled?1:0}`);
+    if(!result.startsWith('OK'))throw new Error(`设置语音快捷键失败：${result}`);
+  }
   return getDesktopPreferences();
+}
+
+async function pollMumbleControls() {
+  if(!mumbleProcess||mumbleProcess.exitCode!==null)return;
+  try{
+    const status=await mumbleCommand('STATUS',900);
+    const match=/^OK connected=[01] muted=([01]) deafened=([01])$/.exec(status);
+    if(!match)return;
+    const muted=match[1]==='1';
+    const deafened=match[2]==='1';
+    if(muted===mumbleMuted&&deafened===mumbleDeafened)return;
+    mumbleMuted=muted;
+    mumbleDeafened=deafened;
+    sendToMainWindow('mumble:controls',{muted,deafened});
+    updateTrayMenu();
+  }catch{}
 }
 
 function showMainWindow() {
@@ -577,6 +623,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('diagnostics:get', () => buildDiagnostics());
   await createMainWindow();
   initializeAutoUpdates();
+  const controlPoller=setInterval(()=>void pollMumbleControls(),350);
+  controlPoller.unref();
 });
 
 app.on('before-quit',()=>{appQuitting=true;stopMumble()});

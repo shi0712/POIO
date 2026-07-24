@@ -12,11 +12,12 @@
   <a href="https://www.modelscope.cn/models/sjw712/POIO/files">ModelScope 镜像</a>
 </p>
 
-> 当前版本：Windows **0.4.0 Preview**、Android **0.1.0-p23**。Windows 安装包尚未进行代码签名，首次运行时可能显示 SmartScreen 提示；Android 当前提供 arm64 APK。
+> 当前版本：Windows **0.5.0 Preview**、Android **0.1.0-p23**。Windows 安装包尚未进行代码签名，首次运行时可能显示 SmartScreen 提示；Android 当前提供 arm64 APK。
 
 ## 已实现功能
 
 - 原生 Mumble + Opus 语音链路，支持输入/输出设备切换、麦克风测试、实时音量反馈、静音、关闭声音、挂断与自动重连。
+- Windows 原生全局静音快捷键与按住说话，支持键盘组合键和鼠标侧键，POIO 在托盘后台时仍然生效。
 - 语音频道成员列表、说话状态提示，以及本地独立调节其他用户音量（0%–200%）。
 - 社区创建、邀请码加入、已加入社区记忆，以及文字/语音频道管理。
 - 频道聊天支持图片、文件、中文文件名、拖放/粘贴附件、区域截图、Markdown、GFM 和代码块。

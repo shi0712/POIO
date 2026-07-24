@@ -1,0 +1,215 @@
+diff --git a/src/mumble/main.cpp b/src/mumble/main.cpp
+index 31cdd04..264c433 100644
+--- a/src/mumble/main.cpp
++++ b/src/mumble/main.cpp
+@@ -294,6 +294,46 @@ extern "C" __declspec(dllexport) int EchoDeck_ConfigureRuntime() {
+ 	return invoked ? 1 : -41;
+ }
+ 
++extern "C" __declspec(dllexport) int EchoDeck_ConfigureHotkeys(int pushToTalkEnabled) {
++	QCoreApplication *application = QCoreApplication::instance();
++	if (!application) {
++		return -40;
++	}
++	const auto configure = [pushToTalkEnabled]() {
++		Global::get().iPushToTalk = 0;
++		Global::get().s.atTransmit =
++			pushToTalkEnabled != 0 ? Settings::PushToTalk : Settings::VAD;
++		if (Global::get().ai) {
++			Global::get().ai->bResetProcessor = true;
++		}
++		Global::get().s.save();
++	};
++	if (QThread::currentThread() == application->thread()) {
++		configure();
++		return 1;
++	}
++	const bool invoked = QMetaObject::invokeMethod(application, configure, Qt::BlockingQueuedConnection);
++	return invoked ? 1 : -41;
++}
++
++extern "C" __declspec(dllexport) int EchoDeck_SetPushToTalk(int down) {
++	QCoreApplication *application = QCoreApplication::instance();
++	if (!application || !Global::get().mw) {
++		return -40;
++	}
++	const auto update = [down]() {
++		if (Global::get().mw) {
++			Global::get().mw->on_PushToTalk_triggered(down != 0, QVariant());
++		}
++	};
++	if (QThread::currentThread() == application->thread()) {
++		update();
++		return 1;
++	}
++	const bool invoked = QMetaObject::invokeMethod(application, update, Qt::QueuedConnection);
++	return invoked ? 1 : -41;
++}
++
+ extern "C" __declspec(dllexport) int EchoDeck_GetVolume(int kind) {
+ 	if (kind == 0) {
+ 		return std::clamp(static_cast< int >(((20000 - Global::get().s.iMinLoudness) * 100.0f) / 19500.0f), 0,
+diff --git a/plugins/echodeckBridge/echodeckBridge.cpp b/plugins/echodeckBridge/echodeckBridge.cpp
+index c09cc17..889fcfe 100644
+--- a/plugins/echodeckBridge/echodeckBridge.cpp
++++ b/plugins/echodeckBridge/echodeckBridge.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include <atomic>
+ #include <cstring>
++#include <sstream>
+ #include <string>
+ #include <thread>
+ 
+@@ -16,8 +17,15 @@ MumbleAPI g_api{};
+ mumble_plugin_id_t g_pluginID{};
+ std::atomic_bool g_running{ false };
+ std::thread g_pipeThread;
++std::thread g_hotkeyThread;
+ 
+ #ifdef OS_WINDOWS
++std::atomic_int g_muteVirtualKey{ 0 };
++std::atomic_int g_muteModifiers{ 0 };
++std::atomic_int g_pushToTalkVirtualKey{ 0 };
++std::atomic_int g_pushToTalkModifiers{ 0 };
++std::atomic_bool g_pushToTalkEnabled{ false };
++
+ std::wstring pipeName() {
+ 	wchar_t suffix[64]{};
+ 	const DWORD length = GetEnvironmentVariableW(L"POIO_MUMBLE_PIPE_SUFFIX", suffix, 64);
+@@ -48,6 +56,8 @@ using SetVolumeFn       = int (*)(int, int);
+ using GetUsersFn        = const char *(*)();
+ using SetUserVolumeFn   = int (*)(const char *, int);
+ using ConfigureRuntimeFn = int (*)();
++using ConfigureHotkeysFn = int (*)(int);
++using SetPushToTalkFn = int (*)(int);
+ 
+ GetAudioDevicesFn getAudioDevicesFunction() {
+ 	static GetAudioDevicesFn function = []() {
+@@ -119,6 +129,74 @@ ConfigureRuntimeFn configureRuntimeFunction() {
+ 	}();
+ 	return function;
+ }
++
++ConfigureHotkeysFn configureHotkeysFunction() {
++	static ConfigureHotkeysFn function = []() {
++		const HMODULE executable = GetModuleHandleW(nullptr);
++		return executable
++				   ? reinterpret_cast< ConfigureHotkeysFn >(GetProcAddress(executable, "EchoDeck_ConfigureHotkeys"))
++				   : nullptr;
++	}();
++	return function;
++}
++
++SetPushToTalkFn setPushToTalkFunction() {
++	static SetPushToTalkFn function = []() {
++		const HMODULE executable = GetModuleHandleW(nullptr);
++		return executable
++				   ? reinterpret_cast< SetPushToTalkFn >(GetProcAddress(executable, "EchoDeck_SetPushToTalk"))
++				   : nullptr;
++	}();
++	return function;
++}
++
++bool modifierPressed(int modifier, int leftKey, int rightKey) {
++	return modifier == 0 || (GetAsyncKeyState(leftKey) & 0x8000) != 0
++		   || (GetAsyncKeyState(rightKey) & 0x8000) != 0;
++}
++
++bool hotkeyPressed(int virtualKey, int modifiers) {
++	if (virtualKey <= 0 || virtualKey > 255 || (GetAsyncKeyState(virtualKey) & 0x8000) == 0) {
++		return false;
++	}
++	return modifierPressed(modifiers & 1, VK_LSHIFT, VK_RSHIFT)
++		   && modifierPressed(modifiers & 2, VK_LCONTROL, VK_RCONTROL)
++		   && modifierPressed(modifiers & 4, VK_LMENU, VK_RMENU)
++		   && modifierPressed(modifiers & 8, VK_LWIN, VK_RWIN);
++}
++
++void runHotkeys() {
++	bool muteWasDown = false;
++	bool pushToTalkWasDown = false;
++	while (g_running.load()) {
++		const bool muteDown = hotkeyPressed(g_muteVirtualKey.load(), g_muteModifiers.load());
++		if (muteDown && !muteWasDown) {
++			mumble_connection_t connection{};
++			bool muted = false;
++			if (g_api.getActiveServerConnection(g_pluginID, &connection) == MUMBLE_STATUS_OK
++				&& g_api.isLocalUserMuted(g_pluginID, &muted) == MUMBLE_STATUS_OK) {
++				g_api.requestLocalUserMute(g_pluginID, !muted);
++			}
++		}
++		muteWasDown = muteDown;
++
++		const bool pushToTalkDown =
++			g_pushToTalkEnabled.load()
++			&& hotkeyPressed(g_pushToTalkVirtualKey.load(), g_pushToTalkModifiers.load());
++		if (pushToTalkDown != pushToTalkWasDown) {
++			if (const auto function = setPushToTalkFunction()) {
++				function(pushToTalkDown ? 1 : 0);
++			}
++			pushToTalkWasDown = pushToTalkDown;
++		}
++		Sleep(8);
++	}
++	if (pushToTalkWasDown) {
++		if (const auto function = setPushToTalkFunction()) {
++			function(0);
++		}
++	}
++}
+ #endif
+ 
+ MumbleStringWrapper staticString(const char *value) {
+@@ -151,6 +229,33 @@ std::string executeCommand(const std::string &line) {
+ 		return statusName(g_api.requestLocalUserDeaf(g_pluginID, line.substr(5) == "1"));
+ 	}
+ #ifdef OS_WINDOWS
++	if (line.rfind("HOTKEYS ", 0) == 0) {
++		int muteKey = 0;
++		int muteModifiers = 0;
++		int pushToTalkKey = 0;
++		int pushToTalkModifiers = 0;
++		int pushToTalkEnabled = 0;
++		std::istringstream values(line.substr(8));
++		if (!(values >> muteKey >> muteModifiers >> pushToTalkKey >> pushToTalkModifiers
++			  >> pushToTalkEnabled)
++			|| muteKey < 0 || muteKey > 255 || pushToTalkKey < 0 || pushToTalkKey > 255
++			|| muteModifiers < 0 || muteModifiers > 15 || pushToTalkModifiers < 0
++			|| pushToTalkModifiers > 15 || (pushToTalkEnabled != 0 && pushToTalkEnabled != 1)
++			|| (pushToTalkEnabled == 1 && pushToTalkKey == 0)) {
++			return "ERROR invalid-hotkeys";
++		}
++		const auto function = configureHotkeysFunction();
++		if (!function) {
++			return "ERROR native-hotkey-api-unavailable";
++		}
++		g_muteVirtualKey.store(muteKey);
++		g_muteModifiers.store(muteModifiers);
++		g_pushToTalkVirtualKey.store(pushToTalkKey);
++		g_pushToTalkModifiers.store(pushToTalkModifiers);
++		g_pushToTalkEnabled.store(pushToTalkEnabled == 1);
++		const int result = function(pushToTalkEnabled);
++		return result == 1 ? "OK" : "ERROR configure-hotkeys-" + std::to_string(result);
++	}
+ 	if (line == "CONFIGURE") {
+ 		const auto function = configureRuntimeFunction();
+ 		if (!function) {
+@@ -296,6 +401,7 @@ extern "C" MUMBLE_PLUGIN_EXPORT mumble_error_t mumble_init(mumble_plugin_id_t pl
+ 	g_running.store(true);
+ #ifdef OS_WINDOWS
+ 	g_pipeThread = std::thread(runPipe);
++	g_hotkeyThread = std::thread(runHotkeys);
+ #endif
+ 	g_api.log(g_pluginID, "EchoDeck native control bridge initialized");
+ 	return MUMBLE_STATUS_OK;
+@@ -308,6 +414,9 @@ extern "C" MUMBLE_PLUGIN_EXPORT void mumble_shutdown() {
+ 	if (g_pipeThread.joinable()) {
+ 		g_pipeThread.join();
+ 	}
++	if (g_hotkeyThread.joinable()) {
++		g_hotkeyThread.join();
++	}
+ #endif
+ }
+ 

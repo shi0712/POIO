@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld('echodeck', {
   diagnostics: () => ipcRenderer.invoke('diagnostics:get'),
   preferences: {
     get: () => ipcRenderer.invoke('preferences:get'),
-    set: (patch:{closeToTray?:boolean;launchAtLogin?:boolean}) => ipcRenderer.invoke('preferences:set',patch)
+    set: (patch:{closeToTray?:boolean;launchAtLogin?:boolean;muteShortcut?:{virtualKey:number;modifiers:number;label:string};pushToTalkEnabled?:boolean;pushToTalkShortcut?:{virtualKey:number;modifiers:number;label:string}}) => ipcRenderer.invoke('preferences:set',patch)
   },
   tray: {
     onToggleMute: (callback:()=>void) => { const listener=()=>callback();ipcRenderer.on('tray:toggle-mute',listener);return()=>ipcRenderer.removeListener('tray:toggle-mute',listener) },
@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('echodeck', {
     connect: (connection:{host:string;port:number;username:string;password:string;channelName:string}) => ipcRenderer.invoke('mumble:connect',connection),
     state: () => ipcRenderer.invoke('mumble:state'),
     onState: (callback:(status:unknown)=>void) => { const listener=(_event:Electron.IpcRendererEvent,status:unknown)=>callback(status);ipcRenderer.on('mumble:state',listener);return()=>ipcRenderer.removeListener('mumble:state',listener) },
+    onControls: (callback:(status:unknown)=>void) => { const listener=(_event:Electron.IpcRendererEvent,status:unknown)=>callback(status);ipcRenderer.on('mumble:controls',listener);return()=>ipcRenderer.removeListener('mumble:controls',listener) },
     command: (command:string) => ipcRenderer.invoke('mumble:command',command),
     disconnect: () => ipcRenderer.invoke('mumble:disconnect'),
     level: () => ipcRenderer.invoke('mumble:level'),

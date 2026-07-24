@@ -6,7 +6,8 @@ declare global {
   type MumbleUserVolume = { username:string;volume:number;talking:boolean };
   type MumbleRuntimeState = { state:'disconnected'|'connecting'|'connected'|'reconnecting'|'error';attempt?:number;message?:string };
   type AppUpdateStatus = { state:'idle'|'checking'|'available'|'downloading'|'downloaded'|'up-to-date'|'error'|'development';version?:string;percent?:number;message?:string;notes?:string };
-  type DesktopPreferences = { closeToTray:boolean;launchAtLogin:boolean };
+  type VoiceShortcut = { virtualKey:number;modifiers:number;label:string };
+  type DesktopPreferences = { closeToTray:boolean;launchAtLogin:boolean;muteShortcut:VoiceShortcut;pushToTalkEnabled:boolean;pushToTalkShortcut:VoiceShortcut };
   interface Window {
     echodeck?: {
       window: { minimize(): Promise<void>; maximize(): Promise<void>; close(): Promise<void> };
@@ -20,6 +21,7 @@ declare global {
         connect(connection:{host:string;port:number;username:string;password:string;channelName:string}):Promise<string>;
         state():Promise<MumbleRuntimeState>;
         onState(callback:(status:MumbleRuntimeState)=>void):()=>void;
+        onControls(callback:(status:{muted:boolean;deafened:boolean})=>void):()=>void;
         command(command:string):Promise<string>;
         disconnect():Promise<void>;
         level():Promise<number>;
