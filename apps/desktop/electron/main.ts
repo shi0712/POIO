@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, screen, session, shell, Tray } from 'electron';
 import electronUpdater from 'electron-updater';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -12,6 +12,7 @@ const { autoUpdater } = electronUpdater;
 const appIcon = app.isPackaged ? path.join(process.resourcesPath, 'app.asar', 'build', 'icon.png') : path.join(dirname, '../build/icon.png');
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
 let mumbleProcess: ChildProcess | null = null;
 let mumbleIdentity = '';
 let mumbleLastFailure = '';
@@ -30,9 +31,12 @@ type MumbleAudioDevice = { index:number;name:string;selected:boolean };
 type MumbleAudioDevices = { inputBackend?:string;outputBackend?:string;inputs:MumbleAudioDevice[];outputs:MumbleAudioDevice[] };
 type MumbleUserVolume = { username:string;volume:number;talking:boolean };
 type AppUpdateStatus = { state:'idle'|'checking'|'available'|'downloading'|'downloaded'|'up-to-date'|'error'|'development';version?:string;percent?:number;message?:string;notes?:string };
+type DesktopPreferences = { closeToTray:boolean;launchAtLogin:boolean };
+type StoredDesktopPreferences = { closeToTray:boolean;trayHintShown:boolean };
 let appUpdateStatus:AppUpdateStatus={state:'idle'};
 let mumbleRuntimeState:MumbleRuntimeState={state:'disconnected'};
 let lastAppUpdateCheck=0;
+let desktopPreferences:StoredDesktopPreferences={closeToTray:true,trayHintShown:false};
 
 function sendToMainWindow(channel:string,value:unknown) {
   const window=mainWindow;
@@ -47,6 +51,7 @@ function sidecarDirectory() {
 function publishMumbleState(state:MumbleRuntimeState) {
   mumbleRuntimeState=state;
   sendToMainWindow('mumble:state',state);
+  updateTrayMenu();
   return state;
 }
 
@@ -356,6 +361,82 @@ function initializeAutoUpdates() {
   mainWindow?.on('focus',maybeCheck);
 }
 
+function desktopPreferencesPath() {
+  return path.join(app.getPath('userData'),'desktop-preferences.json');
+}
+
+function saveDesktopPreferences() {
+  writeFileSync(desktopPreferencesPath(),`${JSON.stringify(desktopPreferences,null,2)}\n`,{encoding:'utf8'});
+}
+
+function loadDesktopPreferences() {
+  const file=desktopPreferencesPath();
+  if(!existsSync(file))return;
+  try{
+    const stored=JSON.parse(readFileSync(file,'utf8')) as Partial<StoredDesktopPreferences>;
+    desktopPreferences={
+      closeToTray:typeof stored.closeToTray==='boolean'?stored.closeToTray:true,
+      trayHintShown:stored.trayHintShown===true,
+    };
+  }catch{}
+}
+
+function getDesktopPreferences():DesktopPreferences {
+  return {
+    closeToTray:desktopPreferences.closeToTray,
+    launchAtLogin:app.isPackaged&&app.getLoginItemSettings().openAtLogin,
+  };
+}
+
+function setDesktopPreferences(patch:Partial<DesktopPreferences>) {
+  if(typeof patch.closeToTray==='boolean')desktopPreferences.closeToTray=patch.closeToTray;
+  if(typeof patch.launchAtLogin==='boolean'&&app.isPackaged){
+    app.setLoginItemSettings({
+      openAtLogin:patch.launchAtLogin,
+      path:process.execPath,
+      args:patch.launchAtLogin?['--hidden']:[],
+    });
+  }
+  saveDesktopPreferences();
+  return getDesktopPreferences();
+}
+
+function showMainWindow() {
+  const window=mainWindow;
+  if(!window||window.isDestroyed())return;
+  if(window.isMinimized())window.restore();
+  window.show();
+  window.focus();
+}
+
+function updateTrayMenu() {
+  if(!tray)return;
+  const connected=mumbleRuntimeState.state==='connected'||mumbleRuntimeState.state==='reconnecting'||mumbleRuntimeState.state==='connecting';
+  const voiceLabel=mumbleRuntimeState.state==='connected'?'语音已连接':mumbleRuntimeState.state==='reconnecting'?'语音正在重连':mumbleRuntimeState.state==='connecting'?'语音正在连接':'未加入语音频道';
+  tray.setContextMenu(Menu.buildFromTemplate([
+    {label:'POIO',enabled:false},
+    {label:'打开主窗口',click:showMainWindow},
+    {type:'separator'},
+    {label:voiceLabel,enabled:false},
+    {
+      label:mumbleMuted?'取消麦克风静音':'麦克风静音',
+      enabled:connected,
+      click:()=>sendToMainWindow('tray:toggle-mute',undefined),
+    },
+    {label:'断开语音',enabled:connected,click:()=>sendToMainWindow('tray:leave-voice',undefined)},
+    {type:'separator'},
+    {label:'检查客户端更新',click:()=>{showMainWindow();void checkForAppUpdate()}},
+    {label:'退出 POIO',click:()=>{appQuitting=true;app.quit()}},
+  ]));
+}
+
+function createTray() {
+  tray=new Tray(appIcon);
+  tray.setToolTip('POIO · 语音社区');
+  tray.on('click',showMainWindow);
+  updateTrayMenu();
+}
+
 function createSplash() {
   splashWindow = new BrowserWindow({
     width: 420,
@@ -409,16 +490,35 @@ async function createMainWindow() {
     setTimeout(() => {
       splashWindow?.close();
       splashWindow = null;
-      mainWindow?.show();
+      if(!process.argv.includes('--hidden'))mainWindow?.show();
     }, 900);
+  });
+  mainWindow.on('close',event=>{
+    if(appQuitting||!desktopPreferences.closeToTray)return;
+    event.preventDefault();
+    mainWindow?.hide();
+    if(!desktopPreferences.trayHintShown&&tray){
+      desktopPreferences.trayHintShown=true;
+      saveDesktopPreferences();
+      tray.displayBalloon({
+        iconType:'info',
+        title:'POIO 正在后台运行',
+        content:'语音连接不会中断。点击任务栏托盘中的 POIO 图标可重新打开。',
+      });
+    }
   });
   mainWindow.once('closed',()=>{mainWindow=null});
 }
 
 app.setAppUserModelId('com.poio.desktop');
+const hasSingleInstanceLock=app.requestSingleInstanceLock();
+if(!hasSingleInstanceLock)app.quit();
+else app.on('second-instance',showMainWindow);
 
 app.whenReady().then(async () => {
-  createSplash();
+  loadDesktopPreferences();
+  createTray();
+  if(!process.argv.includes('--hidden'))createSplash();
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
     callback({ video: sources[0] });
@@ -426,6 +526,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('window:minimize', () => mainWindow?.minimize());
   ipcMain.handle('window:maximize', () => mainWindow?.isMaximized() ? mainWindow.unmaximize() : mainWindow?.maximize());
   ipcMain.handle('window:close', () => mainWindow?.close());
+  ipcMain.handle('preferences:get', () => getDesktopPreferences());
+  ipcMain.handle('preferences:set', (_event,patch:Partial<DesktopPreferences>) => setDesktopPreferences(patch));
   ipcMain.handle('desktop:sources', async () => {
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 360, height: 200 }, fetchWindowIcons: true });
     return sources.map((source) => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL(), appIcon: source.appIcon?.toDataURL() }));
@@ -456,6 +558,7 @@ app.whenReady().then(async () => {
     const result=await mumbleCommand(command); if(!result.startsWith('OK'))throw new Error(result);
     if(command.startsWith('MUTE '))mumbleMuted=command.endsWith('1');
     if(command.startsWith('DEAF '))mumbleDeafened=command.endsWith('1');
+    updateTrayMenu();
     return result;
   });
   ipcMain.handle('mumble:disconnect', () => stopMumble());
@@ -478,3 +581,4 @@ app.whenReady().then(async () => {
 
 app.on('before-quit',()=>{appQuitting=true;stopMumble()});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('activate',showMainWindow);

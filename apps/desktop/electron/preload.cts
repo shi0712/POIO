@@ -9,6 +9,14 @@ contextBridge.exposeInMainWorld('echodeck', {
   getDesktopSources: () => ipcRenderer.invoke('desktop:sources'),
   captureScreenshot: () => ipcRenderer.invoke('desktop:capture'),
   diagnostics: () => ipcRenderer.invoke('diagnostics:get'),
+  preferences: {
+    get: () => ipcRenderer.invoke('preferences:get'),
+    set: (patch:{closeToTray?:boolean;launchAtLogin?:boolean}) => ipcRenderer.invoke('preferences:set',patch)
+  },
+  tray: {
+    onToggleMute: (callback:()=>void) => { const listener=()=>callback();ipcRenderer.on('tray:toggle-mute',listener);return()=>ipcRenderer.removeListener('tray:toggle-mute',listener) },
+    onLeaveVoice: (callback:()=>void) => { const listener=()=>callback();ipcRenderer.on('tray:leave-voice',listener);return()=>ipcRenderer.removeListener('tray:leave-voice',listener) }
+  },
   update: {
     status: () => ipcRenderer.invoke('update:status'),
     check: () => ipcRenderer.invoke('update:check'),
