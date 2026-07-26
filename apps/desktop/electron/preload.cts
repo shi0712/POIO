@@ -13,6 +13,10 @@ contextBridge.exposeInMainWorld('echodeck', {
     get: () => ipcRenderer.invoke('preferences:get'),
     set: (patch:{closeToTray?:boolean;launchAtLogin?:boolean;muteShortcut?:{virtualKey:number;modifiers:number;label:string};pushToTalkEnabled?:boolean;pushToTalkShortcut?:{virtualKey:number;modifiers:number;label:string}}) => ipcRenderer.invoke('preferences:set',patch)
   },
+  invite: {
+    pending: () => ipcRenderer.invoke('invite:pending'),
+    onReceived: (callback:()=>void) => { const listener=()=>callback();ipcRenderer.on('invite:received',listener);return()=>ipcRenderer.removeListener('invite:received',listener) }
+  },
   tray: {
     onToggleMute: (callback:()=>void) => { const listener=()=>callback();ipcRenderer.on('tray:toggle-mute',listener);return()=>ipcRenderer.removeListener('tray:toggle-mute',listener) },
     onLeaveVoice: (callback:()=>void) => { const listener=()=>callback();ipcRenderer.on('tray:leave-voice',listener);return()=>ipcRenderer.removeListener('tray:leave-voice',listener) }

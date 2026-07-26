@@ -16,6 +16,7 @@ export const config = {
   downloadPath: process.env.DOWNLOAD_PATH ?? './deploy/download',
   releasePath: process.env.RELEASE_PATH ?? './releases',
   publicIp: process.env.PUBLIC_IP ?? '127.0.0.1',
+  publicAppUrl: process.env.PUBLIC_APP_URL ?? `https://${process.env.PUBLIC_IP ?? '127.0.0.1'}/poio`,
   mumbleHost: process.env.MUMBLE_PUBLIC_HOST ?? process.env.PUBLIC_IP ?? '127.0.0.1',
   mumblePort: number('MUMBLE_PORT', 64738),
   mumblePassword: process.env.MUMBLE_SERVER_PASSWORD ?? 'echodeck-local-development',

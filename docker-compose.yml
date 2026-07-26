@@ -22,7 +22,7 @@ services:
       - ./mumble-certs:/certs:ro
   server:
     build: .
-    image: poio/server:0.3.8
+    image: poio/server:0.3.9
     container_name: poio-server
     restart: unless-stopped
     network_mode: host
@@ -30,6 +30,7 @@ services:
       HOST: 127.0.0.1
       PORT: 17920
       PUBLIC_IP: ${PUBLIC_IP}
+      PUBLIC_APP_URL: https://${PUBLIC_IP}/poio
       MUMBLE_PUBLIC_HOST: ${MUMBLE_PUBLIC_HOST}
       MUMBLE_PORT: 64738
       MUMBLE_SERVER_PASSWORD: ${MUMBLE_SERVER_PASSWORD}

@@ -183,11 +183,27 @@ export function createSpaceInvite(user: PublicUser, spaceId: string) {
   return {code,spaceId,spaceName:space.name,expiresAt};
 }
 
+function normalizeInviteCode(rawCode:string) {
+  const value=rawCode.trim().toUpperCase();
+  if(/^[A-F0-9]{10}$/.test(value))return value;
+  const match=value.match(/(?:POIO:\/\/INVITE\/|\/INVITE\/)([A-F0-9]{10})(?:[/?#]|$)/);
+  if(!match)throw new Error('邀请链接或邀请码格式不正确');
+  return match[1];
+}
+
+export function previewSpaceInvite(rawCode:string) {
+  const code=normalizeInviteCode(rawCode);
+  const invite=db.prepare(`SELECT i.code,i.space_id AS spaceId,s.name AS spaceName,i.expires_at AS expiresAt,
+    (SELECT COUNT(*) FROM memberships m WHERE m.space_id=i.space_id) AS memberCount
+    FROM space_invites i JOIN spaces s ON s.id=i.space_id
+    WHERE i.code=? AND i.expires_at>?`).get(code,Date.now()) as {code:string;spaceId:string;spaceName:string;expiresAt:number;memberCount:number}|undefined;
+  if(!invite)throw new Error('邀请链接不存在或已过期');
+  return invite;
+}
+
 export function joinSpace(user: PublicUser, rawCode: string) {
-  const code=rawCode.trim().toUpperCase();
-  const invite=db.prepare(`SELECT i.space_id AS spaceId,s.name FROM space_invites i JOIN spaces s ON s.id=i.space_id
-    WHERE i.code=? AND i.expires_at>?`).get(code,Date.now()) as {spaceId:string;name:string}|undefined;
-  if(!invite)throw new Error('邀请码不存在或已过期');
+  const preview=previewSpaceInvite(rawCode);
+  const invite={spaceId:preview.spaceId,name:preview.spaceName};
   db.prepare("INSERT OR IGNORE INTO memberships(space_id,user_id,role) VALUES(?,?,'member')").run(invite.spaceId,user.id);
   return bootstrap(user.id).find(space=>space.id===invite.spaceId)!;
 }

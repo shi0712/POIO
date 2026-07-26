@@ -12,7 +12,7 @@
   <a href="https://www.modelscope.cn/models/sjw712/POIO/files">ModelScope 镜像</a>
 </p>
 
-> 当前版本：Windows **0.5.1 Preview**、Android **0.1.0-p23**。Windows 安装包尚未进行代码签名，首次运行时可能显示 SmartScreen 提示；Android 当前提供 arm64 APK。
+> 当前版本：Windows **0.6.0 Preview**、Android **0.1.0-p23**。Windows 安装包尚未进行代码签名，首次运行时可能显示 SmartScreen 提示；Android 当前提供 arm64 APK。
 
 ## 已实现功能
 
@@ -21,6 +21,7 @@
 - Windows 的成员说话动画、麦克风状态和托盘提示直接读取 Mumble 原生发送状态，按键说话模式下不会把未发送的环境音误判为正在说话。
 - 语音频道成员列表、说话状态提示，以及本地独立调节其他用户音量（0%–200%）。
 - 社区创建、邀请码加入、已加入社区记忆，以及文字/语音频道管理。
+- 社区支持分享 HTTPS 邀请链接；已安装 Windows 客户端时通过 `poio://` 直接唤起，未安装时显示 POIO 下载页，登录后会继续处理待加入邀请。
 - 频道聊天支持图片、文件、中文文件名、拖放/粘贴附件、区域截图、Markdown、GFM 和代码块。
 - 支持 PNG、JPG、WebP、GIF 自定义头像，GIF 可作为动态头像显示。
 - mediasoup/WebRTC 屏幕共享，提供 720p30、1080p30、1080p60 和原画档位，支持系统音频、观看全屏与共享结束清理。

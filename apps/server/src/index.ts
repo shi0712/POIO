@@ -8,7 +8,7 @@ import { nanoid } from 'nanoid';
 import { Server } from 'socket.io';
 import { z } from 'zod';
 import { config } from './config.js';
-import { bootstrap, channelMessages, channelSpaceId, createChannel, createMessage, createSpace, createSpaceInvite, joinSpace, login, register, resume, revokeSession, scheduleDatabaseBackups, spaceMemberIds, spaceMembers, updateAvatar, userFromToken, voiceChannelForUser, type PublicUser } from './database.js';
+import { bootstrap, channelMessages, channelSpaceId, createChannel, createMessage, createSpace, createSpaceInvite, joinSpace, login, previewSpaceInvite, register, resume, revokeSession, scheduleDatabaseBackups, spaceMemberIds, spaceMembers, updateAvatar, userFromToken, voiceChannelForUser, type PublicUser } from './database.js';
 import * as media from './media.js';
 import { claimMumbleUsername, ensureVoiceChannel, mumbleChannelName } from './mumble-control.js';
 
@@ -25,6 +25,15 @@ function normalizeUploadFilename(raw:string) {
 }
 const upload=multer({storage:multer.diskStorage({destination:config.uploadPath,filename:(_req,file,done)=>{file.originalname=normalizeUploadFilename(file.originalname);done(null,`${nanoid()}${path.extname(file.originalname).slice(0,12)}`)}}),limits:{fileSize:50*1024*1024,files:1}});
 app.use('/uploads',express.static(config.uploadPath,{immutable:true,maxAge:'7d',fallthrough:false}));
+app.get('/invite/:code',(_req,res)=>res.sendFile(path.resolve(config.downloadPath,'invite.html'),{headers:{'Cache-Control':'no-store'}}));
+app.get('/api/invites/:code',(req,res)=>{
+  try{
+    const invite=previewSpaceInvite(req.params.code);
+    res.json({...invite,url:`${config.publicAppUrl.replace(/\/$/,'')}/invite/${invite.code}`});
+  }catch(error){
+    res.status(404).json({error:error instanceof Error?error.message:'邀请链接不可用'});
+  }
+});
 app.get('/download',(req,res,next)=>req.originalUrl.endsWith('/')?next():res.redirect(308,'./download/'));
 app.use('/download',express.static(config.downloadPath,{index:'index.html',maxAge:'5m',fallthrough:false}));
 app.get('/releases/latest.yml',(_req,res)=>res.sendFile(path.resolve(config.releasePath,'latest.yml'),{headers:{'Cache-Control':'no-store, no-cache, must-revalidate'}}));
@@ -35,7 +44,7 @@ app.post('/api/uploads',upload.single('file'),(req,res)=>{
   if(!req.file){res.status(400).json({error:'没有收到文件'});return;}
   res.json({url:`/uploads/${req.file.filename}`,name:req.file.originalname,size:req.file.size,mime:req.file.mimetype||'application/octet-stream'});
 });
-app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '0.3.8' }));
+app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '0.3.9' }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: config.corsOrigin }, maxHttpBufferSize: 2_000_000, transports: ['websocket','polling'] });
 
@@ -86,8 +95,8 @@ const leaveVoice = (socketId:string) => {
 io.on('connection', (socket) => {
   socket.on('app:capabilities', (_raw, ack: Ack) => { ok(ack,{
     protocolVersion:1,
-    serverVersion:'0.3.8',
-    features:{chat:true,attachments:true,animatedAvatars:true,mumbleVoice:true,screenReceive:true,screenPublish:true,preferredLayers:true},
+    serverVersion:'0.3.9',
+    features:{chat:true,attachments:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,screenReceive:true,screenPublish:true,preferredLayers:true},
     media:{codecs:['video/H264','video/VP8','audio/opus'],webRtcPort:config.mediaPort},
     android:{minimumVersion:1,recommendedVersion:1}
   }); });
@@ -111,8 +120,9 @@ io.on('connection', (socket) => {
   } catch(e){fail(ack,e);} });
   socket.on('bootstrap', (_raw, ack: Ack) => { try { ok(ack,bootstrap(auth(socket).id)); } catch(e){fail(ack,e);} });
   socket.on('space:create', (raw, ack: Ack) => { try { const {name}=z.object({name:z.string().trim().min(2).max(32)}).parse(raw); const space=createSpace(auth(socket),name); socket.join(`space:${space.id}`); socket.data.spaceIds=[...(socket.data.spaceIds??[]),space.id]; ok(ack,space); broadcastSpacePresence(space.id); } catch(e){fail(ack,e);} });
-  socket.on('space:invite', (raw, ack: Ack) => { try { const {spaceId}=z.object({spaceId:z.string()}).parse(raw); ok(ack,createSpaceInvite(auth(socket),spaceId)); } catch(e){fail(ack,e);} });
-  socket.on('space:join', (raw, ack: Ack) => { try { const {code}=z.object({code:z.string().trim().min(6).max(32)}).parse(raw); const user=auth(socket); const space=joinSpace(user,code); socket.join(`space:${space.id}`); socket.data.spaceIds=[...new Set([...(socket.data.spaceIds??[]),space.id])]; io.to(`space:${space.id}`).emit('space:memberJoined',{spaceId:space.id,user}); ok(ack,space); broadcastSpacePresence(space.id); } catch(e){fail(ack,e);} });
+  socket.on('space:invite', (raw, ack: Ack) => { try { const {spaceId}=z.object({spaceId:z.string()}).parse(raw); const invite=createSpaceInvite(auth(socket),spaceId);ok(ack,{...invite,url:`${config.publicAppUrl.replace(/\/$/,'')}/invite/${invite.code}`}); } catch(e){fail(ack,e);} });
+  socket.on('space:invitePreview', (raw, ack: Ack) => { try { const {code}=z.object({code:z.string().trim().min(6).max(300)}).parse(raw); const invite=previewSpaceInvite(code);ok(ack,{...invite,url:`${config.publicAppUrl.replace(/\/$/,'')}/invite/${invite.code}`}); } catch(e){fail(ack,e);} });
+  socket.on('space:join', (raw, ack: Ack) => { try { const {code}=z.object({code:z.string().trim().min(6).max(300)}).parse(raw); const user=auth(socket); const space=joinSpace(user,code); socket.join(`space:${space.id}`); socket.data.spaceIds=[...new Set([...(socket.data.spaceIds??[]),space.id])]; io.to(`space:${space.id}`).emit('space:memberJoined',{spaceId:space.id,user}); ok(ack,space); broadcastSpacePresence(space.id); } catch(e){fail(ack,e);} });
   socket.on('space:members', (raw, ack: Ack) => { try { const {spaceId}=z.object({spaceId:z.string()}).parse(raw); const user=auth(socket); ok(ack,spaceMembers(user.id,spaceId)); } catch(e){fail(ack,e);} });
   socket.on('space:presence', (raw, ack: Ack) => { try { const {spaceId}=z.object({spaceId:z.string()}).parse(raw); const user=auth(socket); spaceMembers(user.id,spaceId); ok(ack,onlineUserIds(spaceId)); } catch(e){fail(ack,e);} });
   socket.on('channel:create', async (raw, ack: Ack) => { try { const v=z.object({spaceId:z.string(),name:z.string().trim().min(1).max(32),kind:z.enum(['text','voice'])}).parse(raw); const channel=createChannel(auth(socket),v.spaceId,v.name,v.kind); if(channel.kind==='voice')await ensureVoiceChannel(channel.id); io.emit('channel:created',channel); ok(ack,channel); } catch(e){fail(ack,e);} });

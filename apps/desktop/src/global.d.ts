@@ -15,6 +15,7 @@ declare global {
       captureScreenshot(): Promise<{dataUrl:string;width:number;height:number;displayName:string}>;
       diagnostics(): Promise<string>;
       preferences: { get():Promise<DesktopPreferences>;set(patch:Partial<DesktopPreferences>):Promise<DesktopPreferences> };
+      invite: { pending():Promise<string|undefined>;onReceived(callback:()=>void):()=>void };
       tray: { onToggleMute(callback:()=>void):()=>void;onLeaveVoice(callback:()=>void):()=>void };
       update: { status():Promise<AppUpdateStatus>;check():Promise<AppUpdateStatus>;download():Promise<AppUpdateStatus>;install():Promise<void>;onStatus(callback:(status:AppUpdateStatus)=>void):()=>void };
       mumble: {

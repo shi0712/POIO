@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#0b0c12" />
+    <title>加入 POIO 社区</title>
+    <meta name="description" content="通过 POIO 邀请链接加入语音社区。" />
+    <style>
+      *{box-sizing:border-box}
+      body{min-height:100vh;margin:0;background:#0b0c12;color:#eef0f7;font-family:Inter,"Microsoft YaHei",system-ui,sans-serif;display:grid;place-items:center;padding:28px;overflow-x:hidden}
+      body:before,body:after{content:"";position:fixed;width:520px;height:520px;border-radius:50%;filter:blur(16px);pointer-events:none}
+      body:before{left:-240px;top:-250px;background:#7458ff2c}
+      body:after{right:-260px;bottom:-280px;background:#2bd5bc1c}
+      .shell{position:relative;width:min(520px,100%);z-index:1}
+      .brand{display:flex;align-items:center;justify-content:center;gap:11px;margin-bottom:22px;font-weight:900;letter-spacing:.5px}
+      .logo{width:54px;height:42px;border-radius:13px;background:linear-gradient(145deg,#8a72ff,#5c3de8);display:grid;place-items:center;color:#fff;font-size:12px;font-weight:1000;font-style:italic;letter-spacing:-2px;transform:skew(5deg);box-shadow:0 14px 32px #6749ee52}
+      .card{position:relative;padding:34px;border:1px solid #ffffff14;border-radius:26px;background:linear-gradient(155deg,#20232eeb,#14161ee8);box-shadow:0 35px 100px #000b;overflow:hidden}
+      .card:before{content:"";position:absolute;width:250px;height:250px;right:-120px;top:-150px;border-radius:50%;background:#775aff26}
+      .eyebrow{position:relative;display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid #8068ff38;border-radius:99px;background:#7458ff15;color:#ac9fff;font-size:11px}
+      .eyebrow i{width:6px;height:6px;border-radius:50%;background:#4ce0c5;box-shadow:0 0 12px #4ce0c5}
+      h1{position:relative;margin:20px 0 8px;font-size:30px;line-height:1.25}
+      .summary{position:relative;margin:0;color:#8f93a3;font-size:13px;line-height:1.7}
+      .community{position:relative;display:grid;grid-template-columns:58px minmax(0,1fr);align-items:center;gap:14px;margin:26px 0 22px;padding:15px;border:1px solid #ffffff0e;border-radius:15px;background:#0f1118b8}
+      .avatar{width:58px;height:58px;border-radius:17px;background:linear-gradient(145deg,#8067ff,#593de2);display:grid;place-items:center;color:#fff;font-size:24px;font-weight:900;text-transform:uppercase}
+      .community span{display:block;color:#75798a;font-size:10px;margin-bottom:5px}
+      .community b{display:block;overflow:hidden;color:#f4f4f7;font-size:18px;white-space:nowrap;text-overflow:ellipsis}
+      .community small{display:block;margin-top:5px;color:#747889;font-size:10px}
+      .actions{position:relative;display:grid;gap:10px}
+      button,a{height:50px;border:0;border-radius:12px;font:inherit;font-size:13px;font-weight:750;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:9px;cursor:pointer}
+      .open{background:linear-gradient(135deg,#8268ff,#6243e9);color:#fff;box-shadow:0 13px 34px #6548ed3a}
+      .open:hover{filter:brightness(1.08)}
+      .open:disabled{filter:none;opacity:.45;cursor:wait}
+      .download{border:1px solid #ffffff12;background:#ffffff07;color:#c7c9d3}
+      .download:hover{background:#ffffff0c;color:#fff}
+      .share{height:36px;margin:11px auto 0;padding:0 12px;background:transparent;color:#777b8c;font-size:10px}
+      .share:hover{color:#b2a8ff}
+      .status{min-height:19px;margin:14px 0 0;color:#737789;font-size:10px;text-align:center;line-height:1.6}
+      .status.error{color:#ef7a87}
+      .foot{margin:17px 0 0;color:#555968;font-size:9px;text-align:center;line-height:1.7}
+      @media(max-width:560px){body{padding:18px}.card{padding:26px 20px;border-radius:21px}h1{font-size:25px}.community{grid-template-columns:50px minmax(0,1fr)}.avatar{width:50px;height:50px;border-radius:14px;font-size:20px}}
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <div class="brand"><div class="logo">POIO</div><span>POIO</span></div>
+      <section class="card">
+        <span class="eyebrow"><i></i> 社区邀请</span>
+        <h1 id="title">正在读取邀请…</h1>
+        <p class="summary">和朋友一起进入语音频道、发送消息并观看高清屏幕共享。</p>
+        <div class="community">
+          <div class="avatar" id="avatar">P</div>
+          <div><span>邀请你加入</span><b id="name">POIO 社区</b><small id="meta">正在连接 POIO 服务</small></div>
+        </div>
+        <div class="actions">
+          <button class="open" id="open" disabled>在 POIO 中打开</button>
+          <a class="download" id="download" href="/poio/download/">还没有安装？下载 POIO</a>
+        </div>
+        <button class="share" id="copy">复制这个邀请链接</button>
+        <p class="status" id="status"></p>
+        <p class="foot">打开后登录或注册即可加入。已经是社区成员时会直接进入社区。</p>
+      </section>
+    </main>
+    <script>
+      (() => {
+        const parts=location.pathname.split('/').filter(Boolean);
+        const inviteIndex=parts.lastIndexOf('invite');
+        const code=(parts[inviteIndex+1]||'').toUpperCase();
+        const root=parts.includes('poio')?'/poio':'';
+        const openButton=document.querySelector('#open');
+        const download=document.querySelector('#download');
+        const status=document.querySelector('#status');
+        const title=document.querySelector('#title');
+        const name=document.querySelector('#name');
+        const avatar=document.querySelector('#avatar');
+        const meta=document.querySelector('#meta');
+        download.href=`${root}/download/`;
+        const fail=message=>{title.textContent='这个邀请暂时不可用';meta.textContent='请让好友重新生成邀请链接';status.textContent=message;status.classList.add('error')};
+        if(!/^[A-F0-9]{10}$/.test(code)){fail('邀请链接格式不正确');return}
+        fetch(`${root}/api/invites/${encodeURIComponent(code)}`,{cache:'no-store'})
+          .then(async response=>{const value=await response.json();if(!response.ok)throw new Error(value.error||'邀请读取失败');return value})
+          .then(invite=>{
+            title.textContent=`加入「${invite.spaceName}」`;
+            name.textContent=invite.spaceName;
+            avatar.textContent=Array.from(invite.spaceName.trim())[0]?.toUpperCase()||'P';
+            meta.textContent=`${invite.memberCount} 位成员 · 有效期至 ${new Date(invite.expiresAt).toLocaleDateString('zh-CN')}`;
+            document.title=`加入 ${invite.spaceName} — POIO`;
+            openButton.disabled=false;
+            openButton.addEventListener('click',()=>{
+              status.classList.remove('error');
+              status.textContent='正在打开 POIO… 如果没有反应，请下载安装客户端。';
+              location.href=`poio://invite/${invite.code}`;
+              window.setTimeout(()=>{status.textContent='没有打开？请确认已安装 POIO，或点击上方下载按钮。'},1600);
+            });
+          })
+          .catch(error=>fail(error.message));
+        document.querySelector('#copy').addEventListener('click',async event=>{
+          try{await navigator.clipboard.writeText(location.href);event.currentTarget.textContent='邀请链接已复制'}catch{status.textContent='复制失败，请从浏览器地址栏复制链接'}
+        });
+      })();
+    </script>
+  </body>
+</html>

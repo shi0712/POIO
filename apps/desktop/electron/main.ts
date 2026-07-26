@@ -24,6 +24,7 @@ let mumbleMuted = false;
 let mumbleDeafened = false;
 let mumbleTransmitting = false;
 let mumblePushToTalkActive = false;
+let pendingInviteCode: string | undefined;
 const mumblePipeSuffix = process.pid.toString(36);
 const mumblePipe = `${String.raw`\\.\pipe\EchoDeckMumble`}-${mumblePipeSuffix}`;
 
@@ -47,6 +48,30 @@ function sendToMainWindow(channel:string,value:unknown) {
   const window=mainWindow;
   if(!window||window.isDestroyed()||window.webContents.isDestroyed())return;
   window.webContents.send(channel,value);
+}
+
+function inviteCodeFromUrl(value:string) {
+  try{
+    const url=new URL(value);
+    if(url.protocol!=='poio:'||url.hostname.toLowerCase()!=='invite')return undefined;
+    const code=decodeURIComponent(url.pathname.split('/').filter(Boolean)[0]??'').toUpperCase();
+    return /^[A-F0-9]{10}$/.test(code)?code:undefined;
+  }catch{return undefined}
+}
+
+function inviteCodeFromArguments(values:string[]) {
+  for(const value of values){
+    const code=inviteCodeFromUrl(value);
+    if(code)return code;
+  }
+  return undefined;
+}
+
+function queueInviteCode(code:string|undefined) {
+  if(!code)return;
+  pendingInviteCode=code;
+  showMainWindow();
+  sendToMainWindow('invite:received',undefined);
 }
 
 function sidecarDirectory() {
@@ -579,9 +604,15 @@ async function createMainWindow() {
 }
 
 app.setAppUserModelId('com.poio.desktop');
+if(process.env.POIO_DISABLE_PROTOCOL_REGISTRATION!=='1'){
+  if(process.defaultApp&&process.argv[1])app.setAsDefaultProtocolClient('poio',process.execPath,[path.resolve(process.argv[1])]);
+  else app.setAsDefaultProtocolClient('poio');
+}
+pendingInviteCode=inviteCodeFromArguments(process.argv);
 const hasSingleInstanceLock=app.requestSingleInstanceLock();
 if(!hasSingleInstanceLock)app.quit();
-else app.on('second-instance',showMainWindow);
+else app.on('second-instance',(_event,commandLine)=>queueInviteCode(inviteCodeFromArguments(commandLine)));
+app.on('open-url',(event,url)=>{event.preventDefault();queueInviteCode(inviteCodeFromUrl(url))});
 
 app.whenReady().then(async () => {
   loadDesktopPreferences();
@@ -596,6 +627,11 @@ app.whenReady().then(async () => {
   ipcMain.handle('window:close', () => mainWindow?.close());
   ipcMain.handle('preferences:get', () => getDesktopPreferences());
   ipcMain.handle('preferences:set', (_event,patch:Partial<DesktopPreferences>) => setDesktopPreferences(patch));
+  ipcMain.handle('invite:pending', () => {
+    const code=pendingInviteCode;
+    pendingInviteCode=undefined;
+    return code;
+  });
   ipcMain.handle('desktop:sources', async () => {
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 360, height: 200 }, fetchWindowIcons: true });
     return sources.map((source) => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL(), appIcon: source.appIcon?.toDataURL() }));
