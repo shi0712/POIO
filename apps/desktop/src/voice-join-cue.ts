@@ -3,7 +3,10 @@ const MIN_CUE_INTERVAL_MS=350;
 const DEFAULT_JOIN_CUE_URL=new URL('./assets/audio/user-join.mp3',import.meta.url).href;
 const LEAVE_CUE_URL=new URL('./assets/audio/user-leave.mp3',import.meta.url).href;
 const MUTE_CUE_URL=new URL('./assets/audio/mkf-mute.mp3',import.meta.url).href;
-type CueKind='join'|'leave'|'mute';
+const UNMUTE_CUE_URL=new URL('./assets/audio/mkf-cancel-mute.mp3',import.meta.url).href;
+const DEAFEN_CUE_URL=new URL('./assets/audio/head-mute.mp3',import.meta.url).href;
+const UNDEAFEN_CUE_URL=new URL('./assets/audio/cancel-head-mute.mp3',import.meta.url).href;
+type CueKind='join'|'leave'|'mute'|'unmute'|'deafen'|'undeafen';
 const lastCueAt=new Map<CueKind,number>();
 let activeAudio:HTMLAudioElement|undefined;
 let audioContext:AudioContext|undefined;
@@ -62,6 +65,18 @@ export async function playVoiceLeaveCue(){
 
 export async function playMuteCue(){
   await playFileCue('mute',MUTE_CUE_URL,.62);
+}
+
+export async function playUnmuteCue(){
+  await playFileCue('unmute',UNMUTE_CUE_URL,.62);
+}
+
+export async function playDeafenCue(){
+  await playFileCue('deafen',DEAFEN_CUE_URL,.62);
+}
+
+export async function playUndeafenCue(){
+  await playFileCue('undeafen',UNDEAFEN_CUE_URL,.62);
 }
 
 export async function validateJoinSound(file:File){

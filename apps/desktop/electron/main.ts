@@ -660,9 +660,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('mumble:command', async (_event, command:string) => {
     if(!/^(PING|STATUS|MUTE [01]|DEAF [01])$/.test(command))throw new Error('不允许的 Mumble 控制命令');
     const result=await mumbleCommand(command); if(!result.startsWith('OK'))throw new Error(result);
-    if(command.startsWith('MUTE '))mumbleMuted=command.endsWith('1');
-    if(command.startsWith('DEAF '))mumbleDeafened=command.endsWith('1');
-    updateTrayMenu();
+    if(command.startsWith('MUTE ')||command.startsWith('DEAF '))await pollMumbleControls();
     return result;
   });
   ipcMain.handle('mumble:disconnect', () => stopMumble());
