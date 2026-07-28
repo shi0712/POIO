@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { rmSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { io } from 'socket.io-client';
 
@@ -13,7 +15,8 @@ const voice=auth.bootstrap[0].channels.find(channel=>channel.kind==='voice');
 const credentials=await request('voice:credentials',{channelId:voice.id});
 const desktop=path.resolve('apps/desktop');
 const electronPath=path.resolve('node_modules/electron/dist/electron.exe');
-const child=spawn(electronPath,['--remote-debugging-port=9334',desktop],{cwd:desktop,windowsHide:true,stdio:'ignore'});
+const profile=path.join(os.tmpdir(),`poio-electron-connect-smoke-${process.pid}`);
+const child=spawn(electronPath,['--remote-debugging-port=9334',`--user-data-dir=${profile}`,desktop],{cwd:desktop,windowsHide:true,stdio:'ignore'});
 
 try {
   const deadline=Date.now()+20000;let target;
@@ -24,11 +27,13 @@ try {
   if(!target)throw new Error('Electron renderer target not found');
   const result=await new Promise((resolve,reject)=>{
     const ws=new WebSocket(target.webSocketDebuggerUrl);const timer=setTimeout(()=>reject(new Error('CDP timeout')),30000);
-    ws.onopen=()=>ws.send(JSON.stringify({id:1,method:'Runtime.evaluate',params:{expression:`(async()=>{const connection=${JSON.stringify(credentials)};const joined=await Promise.all([window.echodeck.mumble.connect(connection),window.echodeck.mumble.connect(connection)]);const concurrent=await Promise.all([window.echodeck.mumble.devices(),window.echodeck.mumble.volumes(),window.echodeck.mumble.level(),window.echodeck.mumble.devices(),window.echodeck.mumble.volumes(),window.echodeck.mumble.level()]);await window.echodeck.mumble.command('MUTE 1');await window.echodeck.mumble.command('DEAF 1');const reactivated=await window.echodeck.mumble.connect(connection);const status=await window.echodeck.mumble.command('STATUS');if(!/muted=0 deafened=0/.test(status))throw new Error('audio remained muted after reconnect: '+status);await window.echodeck.mumble.disconnect();return {joined,reactivated,status,inputs:concurrent[0].inputs.length,outputs:concurrent[0].outputs.length,inputVolume:concurrent[1].input,outputVolume:concurrent[1].output,levels:[concurrent[2],concurrent[5]]}})()`,awaitPromise:true,returnByValue:true}}));
+    ws.onopen=()=>ws.send(JSON.stringify({id:1,method:'Runtime.evaluate',params:{expression:`(async()=>{const connection=${JSON.stringify(credentials)};const joined=await Promise.all([window.echodeck.mumble.connect(connection),window.echodeck.mumble.connect(connection)]);const concurrent=await Promise.all([window.echodeck.mumble.devices(),window.echodeck.mumble.volumes(),window.echodeck.mumble.level(),window.echodeck.mumble.devices(),window.echodeck.mumble.volumes(),window.echodeck.mumble.level()]);await window.echodeck.mumble.command('MUTE 1');await window.echodeck.mumble.command('DEAF 1');const duplicate=await window.echodeck.mumble.connect(connection);const status=await window.echodeck.mumble.command('STATUS');if(!/muted=1 deafened=1/.test(status))throw new Error('duplicate connect changed audio controls: '+status);await window.echodeck.mumble.disconnect();return {joined,duplicate,status,inputs:concurrent[0].inputs.length,outputs:concurrent[0].outputs.length,inputVolume:concurrent[1].input,outputVolume:concurrent[1].output,levels:[concurrent[2],concurrent[5]]}})()`,awaitPromise:true,returnByValue:true}}));
     ws.onmessage=event=>{const message=JSON.parse(event.data);if(message.id!==1)return;clearTimeout(timer);ws.close();if(message.result?.exceptionDetails)reject(new Error(message.result.exceptionDetails.exception?.description??message.result.exceptionDetails.text));else resolve(message.result.result.value)};
     ws.onerror=()=>reject(new Error('CDP websocket failed'));
   });
   console.log(JSON.stringify({electronConnect:true,...result}));
 } finally {
   child.kill();socket.close();
+  await new Promise(resolve=>setTimeout(resolve,500));
+  rmSync(profile,{recursive:true,force:true,maxRetries:5,retryDelay:100});
 }

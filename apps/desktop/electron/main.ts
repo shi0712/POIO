@@ -203,6 +203,22 @@ async function connectMumble(connection:MumbleConnection,recovering=false) {
   if(!/^[a-zA-Z0-9.-]{1,253}$/.test(connection.host)||!Number.isInteger(connection.port)||connection.port<1||connection.port>65535) throw new Error('Mumble 服务器地址无效');
   if(!connection.username||connection.username.length>64||!connection.channelName||connection.channelName.length>128) throw new Error('Mumble 连接参数无效');
   const identity=connectionIdentity(connection);
+  const activeProcess=mumbleProcess;
+  const sameActiveConnection=!recovering
+    &&mumbleRuntimeState.state==='connected'
+    &&activeProcess
+    &&activeProcess.exitCode===null
+    &&sameMumbleConnection(desiredMumbleConnection,connection);
+  if(sameActiveConnection){
+    try{
+      await waitForMumbleBridge(activeProcess);
+      const status=await mumbleCommand('STATUS');
+      if(/connected=1/.test(status))return status;
+    }catch{
+      // The process looked connected but stopped responding. Fall through to
+      // the normal replacement path instead of surfacing a duplicate error.
+    }
+  }
   if(!recovering){
     desiredMumbleConnection={...connection};
     mumbleRestartAttempts=0;

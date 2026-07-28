@@ -1,6 +1,6 @@
 {
   "name": "@echodeck/desktop",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "description": "低延迟语音、频道聊天与高清屏幕共享客户端",
   "author": "POIO",
   "private": true,
