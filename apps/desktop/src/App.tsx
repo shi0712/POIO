@@ -1,14 +1,16 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronDown, CirclePlus, Code2, Copy, Crown, Download, Eye, FileText, Gamepad2, Hash, Headphones, Image, Keyboard, Link2, LogIn, LogOut, Maximize2, Mic, MicOff, Minimize2, Minus, MonitorUp, PhoneOff, Plus, Power, Quote, Scissors, Search, Send, Settings, Smile, Square, Strikethrough, UserPlus, Users, Volume2, VolumeX, X } from 'lucide-react';
+import { BellRing, Check, ChevronDown, CirclePlus, Code2, Copy, Crown, Download, Eye, FileText, Gamepad2, Hash, Headphones, Image, Keyboard, Link2, LogIn, LogOut, Maximize2, Mic, MicOff, Minimize2, Minus, MonitorUp, PhoneOff, Play, Plus, Power, Quote, Scissors, Search, Send, Settings, Smile, Square, Strikethrough, Upload, UserPlus, Users, Volume2, VolumeX, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { request, serverUrl, socket, uploadFile, type AuthPayload, type Channel, type ChatMessage, type Space, type User } from './api';
 import { ScreenSession, type RemoteMedia, type ScreenShareStatus, type ShareProfile } from './media';
+import { playVoiceJoinCue, validateJoinSound } from './voice-join-cue';
 import './fixes.css';
 
 const TOKEN_KEY='echodeck.session';
 const LAST_SPACE_KEY='poio.last-space';
 const PENDING_INVITE_KEY='poio.pending-invite';
+const VOICE_JOIN_CUES_KEY='poio.voice-join-cues-enabled';
 const channelIcon=(kind:string)=>kind==='voice'?<Volume2 size={17}/>:<Hash size={17}/>;
 const spaceInitial=(name:string)=>(Array.from(name.trim())[0]??'?').toLocaleUpperCase('en-US');
 const electronBridge=()=>{const bridge=window.echodeck;if(!bridge?.mumble)throw new Error('Electron 桥接未加载，请安装 POIO 0.2.0 或更高版本后重启客户端');return bridge};
@@ -25,7 +27,7 @@ export default function App(){
   const voiceJoinEpoch=useRef(0);
   const [shareOpen,setShareOpen]=useState(false); const [sources,setSources]=useState<Array<any>>([]); const [shareProfile,setShareProfile]=useState<ShareProfile>('hd'); const [shareAudio,setShareAudio]=useState(false); const [localShare,setLocalShare]=useState<MediaStream>();
   const [screenShareStatus,setScreenShareStatus]=useState<ScreenShareStatus>({sharing:false,connecting:false,directViewers:0,turnViewers:0});
-  const [settingsOpen,setSettingsOpen]=useState(false); const [audioDevices,setAudioDevices]=useState<MumbleAudioDevices>(); const [settingsBusy,setSettingsBusy]=useState(false);
+  const [settingsOpen,setSettingsOpen]=useState(false); const [audioDevices,setAudioDevices]=useState<MumbleAudioDevices>(); const [settingsBusy,setSettingsBusy]=useState(false); const [joinSoundBusy,setJoinSoundBusy]=useState(false); const [voiceJoinCuesEnabled,setVoiceJoinCuesEnabled]=useState(()=>localStorage.getItem(VOICE_JOIN_CUES_KEY)!=='0');
   const [spaceDialog,setSpaceDialog]=useState<'create'|'join'>(); const [channelDialog,setChannelDialog]=useState<'text'|'voice'>(); const [invite,setInvite]=useState<SpaceInvite>(); const [incomingInvite,setIncomingInvite]=useState<InvitePreview>(); const [incomingInviteLoading,setIncomingInviteLoading]=useState(false); const [incomingInviteJoining,setIncomingInviteJoining]=useState(false); const [spaceMembers,setSpaceMembers]=useState<Array<User&{role:string}>>([]); const [onlineUserIds,setOnlineUserIds]=useState<string[]>([]); const [membersOpen,setMembersOpen]=useState(true); const [emojiOpen,setEmojiOpen]=useState(false); const [accountOpen,setAccountOpen]=useState(false); const [channelQuery,setChannelQuery]=useState(''); const channelSearchRef=useRef<HTMLInputElement>(null);
   const [updateStatus,setUpdateStatus]=useState<AppUpdateStatus>({state:'idle'});
   const [updateDialogOpen,setUpdateDialogOpen]=useState(false);
@@ -43,6 +45,14 @@ export default function App(){
   useEffect(()=>{const disconnected=()=>{screen.close();setLocalShare(undefined)};const restored=()=>setReconnectEpoch(value=>value+1);window.addEventListener('poio:socket-disconnected',disconnected);window.addEventListener('poio:session-restored',restored);return()=>{window.removeEventListener('poio:socket-disconnected',disconnected);window.removeEventListener('poio:session-restored',restored)}},[screen]);
   useEffect(()=>{ const created=(channel:Channel)=>setSpaces(all=>all.map(s=>s.id===(channel as any).spaceId?{...s,channels:[...s.channels,channel]}:s)); socket.on('channel:created',created); return()=>{socket.off('channel:created',created)}; },[]);
   useEffect(()=>{ const presence=(event:{channelId:string;users:User[]})=>setVoiceMembers(all=>({...all,[event.channelId]:event.users})); socket.on('voice:presence',presence); return()=>{socket.off('voice:presence',presence)}; },[]);
+  useEffect(()=>{
+    const joined=(event:{channelId:string;user:User})=>{
+      if(!voiceJoinCuesEnabled||event.channelId!==voiceChannel||event.user.id===user?.id)return;
+      void playVoiceJoinCue(event.user.joinSoundUrl?`${serverUrl}${event.user.joinSoundUrl}`:undefined);
+    };
+    socket.on('voice:memberJoined',joined);
+    return()=>{socket.off('voice:memberJoined',joined)};
+  },[user?.id,voiceChannel,voiceJoinCuesEnabled]);
   useEffect(()=>{const updated=(next:User)=>{setUser(current=>current?.id===next.id?next:current);setSpaceMembers(all=>all.map(member=>member.id===next.id?{...member,...next}:member));setVoiceMembers(all=>Object.fromEntries(Object.entries(all).map(([key,members])=>[key,members.map(member=>member.id===next.id?{...member,...next}:member)])));setMessages(all=>all.map(message=>message.userId===next.id?{...message,avatarUrl:next.avatarUrl}:message))};socket.on('user:updated',updated);return()=>{socket.off('user:updated',updated)}},[]);
   useEffect(()=>{if(!channelId||!user)return;let disposed=false;stickToLatestRef.current=true;setMessageAtBottom(true);setMessages([]);request('channel:watch',{channelId}).catch(showError);request<ChatMessage[]>('chat:history',{channelId}).then(value=>{if(!disposed)setMessages(value.slice(-500))}).catch(showError);const incoming=(m:ChatMessage)=>{if(!disposed&&m.channelId===channelId)setMessages(v=>[...v,m].slice(-500))};socket.on('chat:message',incoming);return()=>{disposed=true;socket.off('chat:message',incoming)}},[channelId,user,reconnectEpoch]);
   useLayoutEffect(()=>{const list=messageListRef.current;if(!list||!stickToLatestRef.current)return;list.scrollTop=list.scrollHeight;setMessageAtBottom(true)},[messages,channelId]);
@@ -75,6 +85,9 @@ export default function App(){
   const insertMarkdown=(before:string,after=before,placeholder='文字')=>{const input=composerInputRef.current;if(!input)return;const start=input.selectionStart;const end=input.selectionEnd;const selected=body.slice(start,end)||placeholder;const next=`${body.slice(0,start)}${before}${selected}${after}${body.slice(end)}`;setBody(next);window.setTimeout(()=>{input.focus();input.setSelectionRange(start+before.length,start+before.length+selected.length)},0)};
   const prefixMarkdown=(prefix:string)=>{const input=composerInputRef.current;if(!input)return;const start=input.selectionStart;const end=input.selectionEnd;const selected=body.slice(start,end)||'文字';const replacement=selected.split('\n').map(line=>`${prefix}${line}`).join('\n');setBody(`${body.slice(0,start)}${replacement}${body.slice(end)}`);window.setTimeout(()=>{input.focus();input.setSelectionRange(start,start+replacement.length)},0)};
   const updateAvatarFromFile=async(file?:File)=>{if(!file||avatarUploading)return;if(!['image/png','image/jpeg','image/webp','image/gif'].includes(file.type)){showError(new Error('头像仅支持 PNG、JPG、GIF 或 WebP'));return}if(file.size>8*1024*1024){showError(new Error('头像不能超过 8 MB'));return}setAvatarUploading(true);try{const token=localStorage.getItem(TOKEN_KEY)??'';const uploaded=await uploadFile(file,token);const updated=await request<User>('user:avatar',{url:uploaded.url});setUser(updated);setAccountOpen(false)}catch(e){showError(e)}finally{setAvatarUploading(false);if(avatarRef.current)avatarRef.current.value=''}};
+  const updateJoinSoundFromFile=async(file?:File)=>{if(!file||joinSoundBusy)return;setJoinSoundBusy(true);try{await validateJoinSound(file);const token=localStorage.getItem(TOKEN_KEY)??'';const uploaded=await uploadFile(file,token);const updated=await request<User>('user:joinSound',{url:uploaded.url});setUser(updated);void playVoiceJoinCue(`${serverUrl}${updated.joinSoundUrl}`)}catch(e){showError(e)}finally{setJoinSoundBusy(false)}};
+  const removeJoinSound=async()=>{if(joinSoundBusy)return;setJoinSoundBusy(true);try{setUser(await request<User>('user:joinSound',{url:null}));void playVoiceJoinCue()}catch(e){showError(e)}finally{setJoinSoundBusy(false)}};
+  const toggleVoiceJoinCues=(enabled:boolean)=>{setVoiceJoinCuesEnabled(enabled);localStorage.setItem(VOICE_JOIN_CUES_KEY,enabled?'1':'0')};
   const addChannel=async(name:string,kind:'text'|'voice')=>{if(!currentSpace)return;try{const c=await request<Channel>('channel:create',{spaceId:currentSpace.id,name,kind});setChannelId(c.id);setChannelDialog(undefined)}catch(e){showError(e)}};
   const openInvite=async()=>{if(!currentSpace)return;try{setInvite(await request<SpaceInvite>('space:invite',{spaceId:currentSpace.id}))}catch(e){showError(e)}};
   const createSpaceFromDialog=async(name:string)=>{try{const space=await request<Space>('space:create',{name});setSpaces(all=>[...all,space]);setSpaceId(space.id);setChannelId(space.channels[0]?.id??'');localStorage.setItem(LAST_SPACE_KEY,space.id);setSpaceDialog(undefined)}catch(e){showError(e)}};
@@ -119,7 +132,9 @@ export default function App(){
     </main>
     <aside className="member-panel">{currentChannel?.kind==='voice'?<><div className="member-title">频道成员 — {visibleVoiceMembers.length}</div>{visibleVoiceMembers.map(member=><MemberRow key={member.id} member={member} online status={`已进入 ${currentChannel.name}`}/>)}</>:<><div className="member-title">在线 — {onlineMembers.length}</div>{onlineMembers.map(member=><MemberRow key={member.id} member={member} online status={member.role==='owner'?'社区拥有者':'在线'}/>)}<div className="member-title muted">离线 — {offlineMembers.length}</div>{offlineMembers.map(member=><MemberRow key={member.id} member={member} status={member.role==='owner'?'社区拥有者':'离线'}/>)}</>}<button className="invite-member" onClick={()=>void openInvite()}><UserPlus size={15}/>邀请好友加入</button></aside>
     {spaceDialog&&<SpaceDialog initialMode={spaceDialog} onCreate={createSpaceFromDialog} onJoin={joinSpaceFromDialog} onClose={()=>setSpaceDialog(undefined)}/>} {channelDialog&&<ChannelDialog kind={channelDialog} onCreate={addChannel} onClose={()=>setChannelDialog(undefined)}/>} {invite&&<InviteDialog invite={invite} onClose={()=>setInvite(undefined)}/>} {incomingInvite&&<IncomingInviteDialog invite={incomingInvite} alreadyJoined={spaces.some(space=>space.id===incomingInvite.spaceId)} busy={incomingInviteJoining} onAccept={()=>void acceptIncomingInvite()} onClose={()=>{localStorage.removeItem(PENDING_INVITE_KEY);setIncomingInvite(undefined)}}/>} {imagePreview&&<ImagePreview url={imagePreview.url} name={imagePreview.name} onClose={()=>setImagePreview(undefined)}/>} {screenshot&&<ScreenshotSelector capture={screenshot} onConfirm={queueScreenshot} onClose={()=>setScreenshot(undefined)}/>}
-    {shareOpen&&<SharePicker sources={sources} profile={shareProfile} setProfile={setShareProfile} includeAudio={shareAudio} setIncludeAudio={setShareAudio} onPick={startShare} onClose={()=>setShareOpen(false)}/>} {settingsOpen&&<AudioSettings connected={!!voiceChannel} devices={audioDevices} busy={settingsBusy} micLevel={muted?0:micLevel} onRefresh={loadAudioDevices} onSelect={async(kind,index)=>{setSettingsBusy(true);try{const mumble=electronBridge().mumble;setAudioDevices(kind==='input'?await mumble.setInput(index):await mumble.setOutput(index))}catch(e){showError(e)}finally{setSettingsBusy(false)}}} onClose={()=>setSettingsOpen(false)}/>} {updateDialogOpen&&<UpdateDialog status={updateStatus} onClose={()=>setUpdateDialogOpen(false)} onDownload={()=>void window.echodeck?.update.download()} onInstall={()=>void window.echodeck?.update.install()} onRetry={()=>void window.echodeck?.update.check()}/>} {error&&<div className="toast">{error}</div>}
+    {shareOpen&&<SharePicker sources={sources} profile={shareProfile} setProfile={setShareProfile} includeAudio={shareAudio} setIncludeAudio={setShareAudio} onPick={startShare} onClose={()=>setShareOpen(false)}/>}
+    {settingsOpen&&<AudioSettings connected={!!voiceChannel} devices={audioDevices} busy={settingsBusy} micLevel={muted?0:micLevel} joinSoundBusy={joinSoundBusy} joinSoundUrl={user.joinSoundUrl} voiceJoinCuesEnabled={voiceJoinCuesEnabled} onToggleVoiceJoinCues={toggleVoiceJoinCues} onUploadJoinSound={updateJoinSoundFromFile} onRemoveJoinSound={removeJoinSound} onTestJoinSound={()=>void playVoiceJoinCue(user.joinSoundUrl?`${serverUrl}${user.joinSoundUrl}`:undefined)} onRefresh={loadAudioDevices} onSelect={async(kind,index)=>{setSettingsBusy(true);try{const mumble=electronBridge().mumble;setAudioDevices(kind==='input'?await mumble.setInput(index):await mumble.setOutput(index))}catch(e){showError(e)}finally{setSettingsBusy(false)}}} onClose={()=>setSettingsOpen(false)}/>}
+    {updateDialogOpen&&<UpdateDialog status={updateStatus} onClose={()=>setUpdateDialogOpen(false)} onDownload={()=>void window.echodeck?.update.download()} onInstall={()=>void window.echodeck?.update.install()} onRetry={()=>void window.echodeck?.update.check()}/>} {error&&<div className="toast">{error}</div>}
   </div>
 }
 
@@ -157,8 +172,25 @@ function keyboardShortcut(event:KeyboardEvent):VoiceShortcut|undefined{
   return {virtualKey,modifiers,label:parts.join(' + ')};
 }
 const sameShortcut=(left:VoiceShortcut,right:VoiceShortcut)=>left.virtualKey===right.virtualKey&&left.modifiers===right.modifiers;
-function AudioSettings({connected,devices,busy,micLevel,onRefresh,onSelect,onClose}:{connected:boolean;devices?:MumbleAudioDevices;busy:boolean;micLevel:number;onRefresh:()=>Promise<void>;onSelect:(kind:'input'|'output',index:number)=>Promise<void>;onClose:()=>void}){
+type AudioSettingsProps={
+  connected:boolean;
+  devices?:MumbleAudioDevices;
+  busy:boolean;
+  micLevel:number;
+  joinSoundBusy:boolean;
+  joinSoundUrl?:string;
+  voiceJoinCuesEnabled:boolean;
+  onToggleVoiceJoinCues:(enabled:boolean)=>void;
+  onUploadJoinSound:(file?:File)=>Promise<void>;
+  onRemoveJoinSound:()=>Promise<void>;
+  onTestJoinSound:()=>void;
+  onRefresh:()=>Promise<void>;
+  onSelect:(kind:'input'|'output',index:number)=>Promise<void>;
+  onClose:()=>void;
+};
+function AudioSettings({connected,devices,busy,micLevel,joinSoundBusy,joinSoundUrl,voiceJoinCuesEnabled,onToggleVoiceJoinCues,onUploadJoinSound,onRemoveJoinSound,onTestJoinSound,onRefresh,onSelect,onClose}:AudioSettingsProps){
   const [testing,setTesting]=useState(false);
+  const joinSoundInputRef=useRef<HTMLInputElement>(null);
   const [diagnosticsState,setDiagnosticsState]=useState<'idle'|'copying'|'copied'>('idle');
   const [preferences,setPreferences]=useState<DesktopPreferences>({closeToTray:true,launchAtLogin:false,muteShortcut:{virtualKey:77,modifiers:3,label:'Ctrl + Shift + M'},pushToTalkEnabled:false,pushToTalkShortcut:{virtualKey:86,modifiers:0,label:'V'}});
   const [preferencesBusy,setPreferencesBusy]=useState(false);
@@ -196,5 +228,66 @@ function AudioSettings({connected,devices,busy,micLevel,onRefresh,onSelect,onClo
     void saveShortcut(capturing,shortcut);
   };
   const copyDiagnostics=async()=>{setDiagnosticsState('copying');try{await navigator.clipboard.writeText(await electronBridge().diagnostics());setDiagnosticsState('copied');window.setTimeout(()=>setDiagnosticsState('idle'),1800)}catch{setDiagnosticsState('idle')}};
-  return <div className="modal-backdrop"><div className="settings-modal"><div className="modal-head"><div><h2>设置</h2><p>管理桌面行为、全局快捷键和 Mumble 原生语音设备。</p></div><button onClick={onClose}><X/></button></div><section className="desktop-preferences"><b>桌面行为</b><label className="preference-row"><Minimize2/><span><strong>关闭时最小化到托盘</strong><small>保持语音和后台下载不中断，可从托盘菜单真正退出。</small></span><input disabled={preferencesBusy} type="checkbox" checked={preferences.closeToTray} onChange={event=>void changePreference({closeToTray:event.target.checked})}/></label><label className="preference-row"><Power/><span><strong>开机时自动启动 POIO</strong><small>登录 Windows 后在托盘后台启动，不打扰桌面。</small></span><input disabled={preferencesBusy} type="checkbox" checked={preferences.launchAtLogin} onChange={event=>void changePreference({launchAtLogin:event.target.checked})}/></label></section><section className="voice-shortcut-settings"><div className="voice-shortcut-title"><span><Keyboard/><b>全局语音快捷键</b><small>游戏在前台、POIO 在托盘时也能使用。</small></span></div><div className="shortcut-row"><span><MicOff/><b>麦克风静音</b><small>按一次静音，再按一次恢复。</small></span><button className={capturing==='mute'?'capturing':''} disabled={preferencesBusy} onMouseDown={captureMouse} onClick={()=>{setShortcutError('');setCapturing('mute')}}>{capturing==='mute'?'请按键或鼠标侧键…':preferences.muteShortcut.label}</button></div><label className="preference-row ptt-toggle"><Mic/><span><strong>按住说话</strong><small>开启后关闭自动语音检测；按住快捷键发送，松开立即停止。</small></span><input disabled={preferencesBusy} type="checkbox" checked={preferences.pushToTalkEnabled} onChange={event=>void changePreference({pushToTalkEnabled:event.target.checked})}/></label>{preferences.pushToTalkEnabled&&<div className="shortcut-row"><span><Keyboard/><b>按键说话快捷键</b><small>推荐使用鼠标侧键，避免影响游戏操作。</small></span><button className={capturing==='pushToTalk'?'capturing':''} disabled={preferencesBusy} onMouseDown={captureMouse} onClick={()=>{setShortcutError('');setCapturing('pushToTalk')}}>{capturing==='pushToTalk'?'请按住想使用的键…':preferences.pushToTalkShortcut.label}</button></div>}{shortcutError&&<p className="shortcut-error">{shortcutError}</p>}<p className="shortcut-note">录入时按 Esc 取消。全局监听由 POIO 的 Mumble 原生语音核心完成，不会记录输入内容。</p></section><div className="settings-section-title">语音设备</div>{!connected?<div className="settings-empty"><Headphones/><b>先加入语音频道</b><span>连接后即可读取并切换麦克风和扬声器。</span></div>:<><div className="engine-card"><div className="engine-dot"/><div><b>Mumble Native</b><span>{devices?.inputBackend??'WASAPI'} / {devices?.outputBackend??'WASAPI'} · 低延迟模式</span></div><button disabled={busy} onClick={()=>void onRefresh()}>{busy?'读取中…':'刷新设备'}</button></div><label className="device-field"><span><Mic/>输入设备</span><select disabled={busy||!devices?.inputs.length} value={input} onChange={e=>void onSelect('input',Number(e.target.value))}>{!devices?.inputs.length&&<option value="">未检测到输入设备</option>}{devices?.inputs.map(device=><option value={device.index} key={device.index}>{device.name}</option>)}</select><small>选择用于发送语音的麦克风。</small></label><div className={`mic-test ${testing?'testing':''}`}><div className="mic-test-head"><span><Mic/>麦克风测试</span><button onClick={()=>setTesting(value=>!value)}>{testing?'停止测试':'开始测试'}</button></div><div className="mic-test-track"><i style={{width:`${Math.round(level*100)}%`}}/></div><small>{testing?(level>.25?'已检测到声音，对着麦克风说话时音量条会实时变化。':'正在监听，请对着麦克风说话…'):'点击开始测试，检查麦克风输入音量。'}</small></div><label className="device-field"><span><Volume2/>输出设备</span><select disabled={busy||!devices?.outputs.length} value={output} onChange={e=>void onSelect('output',Number(e.target.value))}>{!devices?.outputs.length&&<option value="">未检测到输出设备</option>}{devices?.outputs.map(device=><option value={device.index} key={device.index}>{device.name}</option>)}</select><small>选择用于播放频道语音的耳机或扬声器。</small></label><p className="settings-note">切换时语音会短暂重启，当前频道连接不会断开。选择结果会由 Mumble 保存。</p></>}<div className="diagnostics-row"><div><b>遇到问题？</b><span>复制不含密码的运行环境和音频核心状态。</span></div><button disabled={diagnosticsState==='copying'} onClick={()=>void copyDiagnostics()}>{diagnosticsState==='copied'?<Check/>:<Copy/>}{diagnosticsState==='copying'?'正在生成…':diagnosticsState==='copied'?'已复制':'复制诊断信息'}</button></div></div></div>
+  return <div className="modal-backdrop">
+    <div className="settings-modal">
+      <div className="modal-head">
+        <div><h2>设置</h2><p>管理桌面行为、频道提示音、全局快捷键和 Mumble 原生语音设备。</p></div>
+        <button onClick={onClose}><X/></button>
+      </div>
+      <section className="desktop-preferences">
+        <b>桌面行为</b>
+        <label className="preference-row">
+          <Minimize2/><span><strong>关闭时最小化到托盘</strong><small>保持语音和后台下载不中断，可从托盘菜单真正退出。</small></span>
+          <input disabled={preferencesBusy} type="checkbox" checked={preferences.closeToTray} onChange={event=>void changePreference({closeToTray:event.target.checked})}/>
+        </label>
+        <label className="preference-row">
+          <Power/><span><strong>开机时自动启动 POIO</strong><small>登录 Windows 后在托盘后台启动，不打扰桌面。</small></span>
+          <input disabled={preferencesBusy} type="checkbox" checked={preferences.launchAtLogin} onChange={event=>void changePreference({launchAtLogin:event.target.checked})}/>
+        </label>
+      </section>
+      <section className="voice-shortcut-settings">
+        <div className="voice-shortcut-title"><span><Keyboard/><b>全局语音快捷键</b><small>游戏在前台、POIO 在托盘时也能使用。</small></span></div>
+        <div className="shortcut-row">
+          <span><MicOff/><b>麦克风静音</b><small>按一次静音，再按一次恢复。</small></span>
+          <button className={capturing==='mute'?'capturing':''} disabled={preferencesBusy} onMouseDown={captureMouse} onClick={()=>{setShortcutError('');setCapturing('mute')}}>{capturing==='mute'?'请按键或鼠标侧键…':preferences.muteShortcut.label}</button>
+        </div>
+        <label className="preference-row ptt-toggle">
+          <Mic/><span><strong>按住说话</strong><small>开启后关闭自动语音检测；按住快捷键发送，松开立即停止。</small></span>
+          <input disabled={preferencesBusy} type="checkbox" checked={preferences.pushToTalkEnabled} onChange={event=>void changePreference({pushToTalkEnabled:event.target.checked})}/>
+        </label>
+        {preferences.pushToTalkEnabled&&<div className="shortcut-row">
+          <span><Keyboard/><b>按键说话快捷键</b><small>推荐使用鼠标侧键，避免影响游戏操作。</small></span>
+          <button className={capturing==='pushToTalk'?'capturing':''} disabled={preferencesBusy} onMouseDown={captureMouse} onClick={()=>{setShortcutError('');setCapturing('pushToTalk')}}>{capturing==='pushToTalk'?'请按住想使用的键…':preferences.pushToTalkShortcut.label}</button>
+        </div>}
+        {shortcutError&&<p className="shortcut-error">{shortcutError}</p>}
+        <p className="shortcut-note">录入时按 Esc 取消。全局监听由 POIO 的 Mumble 原生语音核心完成，不会记录输入内容。</p>
+      </section>
+      <section className="join-sound-settings">
+        <div className="join-sound-heading"><BellRing/><span><b>加入频道提示音</b><small>只在其他人加入你所在的语音频道时播放，你加入时自己不会听到。</small></span></div>
+        <label className="preference-row join-cue-toggle">
+          <Volume2/><span><strong>播放他人的加入提示音</strong><small>关闭后，你不会听到默认或自定义加入音。</small></span>
+          <input type="checkbox" checked={voiceJoinCuesEnabled} onChange={event=>onToggleVoiceJoinCues(event.target.checked)}/>
+        </label>
+        <div className="join-sound-file">
+          <span><b>{joinSoundUrl?'已设置自定义加入音':'使用 POIO 默认加入音'}</b><small>{joinSoundUrl?'其他人在频道里会听到你设置的声音。':'上传后，别人会在你加入频道时听到它。'}</small></span>
+          <div>
+            <button disabled={joinSoundBusy} onClick={onTestJoinSound}><Play/>{joinSoundUrl?'试听':'试听默认音'}</button>
+            <button disabled={joinSoundBusy} onClick={()=>joinSoundInputRef.current?.click()}><Upload/>{joinSoundBusy?'上传中…':joinSoundUrl?'更换':'上传'}</button>
+            {joinSoundUrl&&<button className="danger-subtle" disabled={joinSoundBusy} onClick={()=>void onRemoveJoinSound()}>恢复默认</button>}
+          </div>
+          <input ref={joinSoundInputRef} hidden type="file" accept=".mp3,.ogg,.wav,.m4a,.aac,.webm,audio/*" onChange={event=>{const file=event.target.files?.[0];event.target.value='';void onUploadJoinSound(file)}}/>
+        </div>
+        <p className="join-sound-limits">支持 MP3、OGG、WAV、M4A、AAC、WebM；最大 2 MB，时长 0.1–4 秒。</p>
+      </section>
+      <div className="settings-section-title">语音设备</div>
+      {!connected?<div className="settings-empty"><Headphones/><b>先加入语音频道</b><span>连接后即可读取并切换麦克风和扬声器。</span></div>:<>
+        <div className="engine-card"><div className="engine-dot"/><div><b>Mumble Native</b><span>{devices?.inputBackend??'WASAPI'} / {devices?.outputBackend??'WASAPI'} · 低延迟模式</span></div><button disabled={busy} onClick={()=>void onRefresh()}>{busy?'读取中…':'刷新设备'}</button></div>
+        <label className="device-field"><span><Mic/>输入设备</span><select disabled={busy||!devices?.inputs.length} value={input} onChange={event=>void onSelect('input',Number(event.target.value))}>{!devices?.inputs.length&&<option value="">未检测到输入设备</option>}{devices?.inputs.map(device=><option value={device.index} key={device.index}>{device.name}</option>)}</select><small>选择用于发送语音的麦克风。</small></label>
+        <div className={`mic-test ${testing?'testing':''}`}><div className="mic-test-head"><span><Mic/>麦克风测试</span><button onClick={()=>setTesting(value=>!value)}>{testing?'停止测试':'开始测试'}</button></div><div className="mic-test-track"><i style={{width:`${Math.round(level*100)}%`}}/></div><small>{testing?(level>.25?'已检测到声音，对着麦克风说话时音量条会实时变化。':'正在监听，请对着麦克风说话…'):'点击开始测试，检查麦克风输入音量。'}</small></div>
+        <label className="device-field"><span><Volume2/>输出设备</span><select disabled={busy||!devices?.outputs.length} value={output} onChange={event=>void onSelect('output',Number(event.target.value))}>{!devices?.outputs.length&&<option value="">未检测到输出设备</option>}{devices?.outputs.map(device=><option value={device.index} key={device.index}>{device.name}</option>)}</select><small>选择用于播放频道语音的耳机或扬声器。</small></label>
+        <p className="settings-note">切换时语音会短暂重启，当前频道连接不会断开。选择结果会由 Mumble 保存。</p>
+      </>}
+      <div className="diagnostics-row"><div><b>遇到问题？</b><span>复制不含密码的运行环境和音频核心状态。</span></div><button disabled={diagnosticsState==='copying'} onClick={()=>void copyDiagnostics()}>{diagnosticsState==='copied'?<Check/>:<Copy/>}{diagnosticsState==='copying'?'正在生成…':diagnosticsState==='copied'?'已复制':'复制诊断信息'}</button></div>
+    </div>
+  </div>;
 }

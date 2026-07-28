@@ -1,6 +1,6 @@
 import { io, type Socket } from 'socket.io-client';
 
-export type User = { id: string; username: string; avatarUrl?:string };
+export type User = { id: string; username: string; avatarUrl?:string; joinSoundUrl?:string };
 export type Channel = { id: string; spaceId?: string; name: string; kind: 'text'|'voice'; position: number };
 export type Space = { id: string; name: string; ownerId: string; channels: Channel[] };
 export type ChatMessage = { id:string;channelId:string;body:string;createdAt:number;userId:string;username:string;avatarUrl?:string;attachmentUrl?:string;attachmentName?:string;attachmentSize?:number;attachmentMime?:string };

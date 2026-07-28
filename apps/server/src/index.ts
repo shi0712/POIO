@@ -8,7 +8,7 @@ import { nanoid } from 'nanoid';
 import { Server } from 'socket.io';
 import { z } from 'zod';
 import { config } from './config.js';
-import { bootstrap, channelMessages, channelSpaceId, createChannel, createMessage, createSpace, createSpaceInvite, joinSpace, login, previewSpaceInvite, register, resume, revokeSession, scheduleDatabaseBackups, spaceMemberIds, spaceMembers, updateAvatar, userFromToken, voiceChannelForUser, type PublicUser } from './database.js';
+import { bootstrap, channelMessages, channelSpaceId, createChannel, createMessage, createSpace, createSpaceInvite, joinSpace, login, previewSpaceInvite, register, resume, revokeSession, scheduleDatabaseBackups, spaceMemberIds, spaceMembers, updateAvatar, updateJoinSound, userFromToken, voiceChannelForUser, type PublicUser } from './database.js';
 import * as media from './media.js';
 import { claimMumbleUsername, ensureVoiceChannel, mumbleChannelName } from './mumble-control.js';
 
@@ -44,7 +44,7 @@ app.post('/api/uploads',upload.single('file'),(req,res)=>{
   if(!req.file){res.status(400).json({error:'没有收到文件'});return;}
   res.json({url:`/uploads/${req.file.filename}`,name:req.file.originalname,size:req.file.size,mime:req.file.mimetype||'application/octet-stream'});
 });
-app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '0.3.9' }));
+app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '0.4.0' }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: config.corsOrigin }, maxHttpBufferSize: 2_000_000, transports: ['websocket','polling'] });
 
@@ -60,8 +60,10 @@ const fail = (ack: Ack, error: unknown) => ack({ ok: false, error: error instanc
 const auth = (socket: any): PublicUser => { if (!socket.data.user) throw new Error('请先登录'); return socket.data.user; };
 type VoicePresence = { channelId:string; user:PublicUser };
 const voicePresence = new Map<string,VoicePresence>();
+const recentVoiceDisconnects = new Map<string,{expiresAt:number;timer:NodeJS.Timeout}>();
 const onlineSessions = new Map<string,string>();
 const voiceUsers = (channelId:string) => [...new Map([...voicePresence.values()].filter(entry=>entry.channelId===channelId).map(entry=>[entry.user.id,entry.user])).values()];
+const voicePresenceKey = (channelId:string,userId:string) => `${channelId}:${userId}`;
 const broadcastVoicePresence = (channelId:string) => {
   const spaceId=channelSpaceId(channelId);
   if(spaceId)io.to(`space:${spaceId}`).emit('voice:presence',{channelId,users:voiceUsers(channelId)});
@@ -85,11 +87,26 @@ const detachUser = (socket:any) => {
   socket.data.spaceIds=[];
   for(const spaceId of spaceIds)broadcastSpacePresence(spaceId);
 };
-const leaveVoice = (socketId:string) => {
+const leaveVoice = (socketId:string,unexpected=false) => {
   const previous=voicePresence.get(socketId);
   if(!previous)return;
   voicePresence.delete(socketId);
+  if(unexpected&&!voiceUsers(previous.channelId).some(user=>user.id===previous.user.id)){
+    const key=voicePresenceKey(previous.channelId,previous.user.id);
+    const old=recentVoiceDisconnects.get(key);if(old)clearTimeout(old.timer);
+    const expiresAt=Date.now()+10_000;
+    const timer=setTimeout(()=>recentVoiceDisconnects.delete(key),10_000);
+    timer.unref();
+    recentVoiceDisconnects.set(key,{expiresAt,timer});
+  }
   broadcastVoicePresence(previous.channelId);
+};
+const publishUserUpdate = (updated:PublicUser,spaceIds:string[]) => {
+  for(const connected of io.sockets.sockets.values())if(connected.data.user?.id===updated.id)connected.data.user=updated;
+  for(const spaceId of spaceIds)io.to(`space:${spaceId}`).emit('user:updated',updated);
+  const changedChannels=new Set<string>();
+  for(const entry of voicePresence.values())if(entry.user.id===updated.id){entry.user=updated;changedChannels.add(entry.channelId)}
+  for(const channelId of changedChannels)broadcastVoicePresence(channelId);
 };
 const notifyP2PPeerLeft = (socketId:string) => {
   const session=media.peerSession(socketId);if(!session)return;
@@ -99,8 +116,8 @@ const notifyP2PPeerLeft = (socketId:string) => {
 io.on('connection', (socket) => {
   socket.on('app:capabilities', (_raw, ack: Ack) => { ok(ack,{
     protocolVersion:1,
-    serverVersion:'0.3.9',
-    features:{chat:true,attachments:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true},
+    serverVersion:'0.4.0',
+    features:{chat:true,attachments:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,customJoinSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true},
     media:{codecs:['video/H264','video/VP8','audio/opus'],webRtcPort:config.mediaPort},
     android:{minimumVersion:1,recommendedVersion:1}
   }); });
@@ -116,10 +133,12 @@ io.on('connection', (socket) => {
   socket.on('auth:logout', (raw, ack: Ack) => { try { const {token}=z.object({token:z.string().min(32)}).parse(raw); auth(socket); revokeSession(token); leaveVoice(socket.id); notifyP2PPeerLeft(socket.id); media.leaveMedia(socket.id); detachUser(socket); ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('user:avatar', (raw, ack: Ack) => { try {
     const current=auth(socket);const {url}=z.object({url:z.string().max(300).nullable()}).parse(raw);
-    const updated=updateAvatar(current.id,url);for(const connected of io.sockets.sockets.values())if(connected.data.user?.id===updated.id)connected.data.user=updated;
-    const spaces=[...(socket.data.spaceIds??[])];for(const spaceId of spaces)io.to(`space:${spaceId}`).emit('user:updated',updated);
-    const changedChannels=new Set<string>();for(const entry of voicePresence.values())if(entry.user.id===updated.id){entry.user=updated;changedChannels.add(entry.channelId)}
-    for(const channelId of changedChannels)broadcastVoicePresence(channelId);
+    const updated=updateAvatar(current.id,url);publishUserUpdate(updated,[...(socket.data.spaceIds??[])]);
+    ok(ack,updated);
+  } catch(e){fail(ack,e);} });
+  socket.on('user:joinSound', (raw, ack: Ack) => { try {
+    const current=auth(socket);const {url}=z.object({url:z.string().max(300).nullable()}).parse(raw);
+    const updated=updateJoinSound(current.id,url);publishUserUpdate(updated,[...(socket.data.spaceIds??[])]);
     ok(ack,updated);
   } catch(e){fail(ack,e);} });
   socket.on('bootstrap', (_raw, ack: Ack) => { try { ok(ack,bootstrap(auth(socket).id)); } catch(e){fail(ack,e);} });
@@ -134,7 +153,18 @@ io.on('connection', (socket) => {
   socket.on('chat:send', (raw, ack: Ack) => { try { const v=z.object({channelId:z.string(),body:z.string().trim().max(4000).default(''),attachment:z.object({url:z.string().startsWith('/uploads/'),name:z.string().min(1).max(255),size:z.number().int().max(50*1024*1024),mime:z.string().max(128)}).optional()}).refine(v=>v.body.length>0||v.attachment,'消息不能为空').parse(raw); const user=auth(socket); const msg=createMessage(user,v.channelId,v.body,v.attachment); io.to(`channel:${v.channelId}`).emit('chat:message',msg); const spaceId=channelSpaceId(v.channelId); if(spaceId)io.to(`space:${spaceId}`).emit('chat:activity',{channelId:v.channelId,messageId:msg.id,userId:user.id}); ok(ack,msg); } catch(e){fail(ack,e);} });
   socket.on('channel:watch', (raw, ack: Ack) => { try { const channelId=z.object({channelId:z.string()}).parse(raw).channelId; auth(socket); for (const room of socket.rooms) if(room.startsWith('channel:')) socket.leave(room); socket.join(`channel:${channelId}`); ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('voice:credentials', async (raw, ack: Ack) => { try { const user=auth(socket); const channel=voiceChannelForUser(user.id,z.object({channelId:z.string()}).parse(raw).channelId); const username=`ed_${user.id}`; await ensureVoiceChannel(channel.id); await claimMumbleUsername(username); ok(ack,{host:config.mumbleHost,port:config.mumblePort,username,password:config.mumblePassword,channelName:mumbleChannelName(channel.id)}); } catch(e){fail(ack,e);} });
-  socket.on('voice:join', (raw, ack: Ack) => { try { const user=auth(socket); const channel=voiceChannelForUser(user.id,z.object({channelId:z.string()}).parse(raw).channelId); leaveVoice(socket.id); voicePresence.set(socket.id,{channelId:channel.id,user}); broadcastVoicePresence(channel.id); ok(ack,{channelId:channel.id,users:voiceUsers(channel.id)}); } catch(e){fail(ack,e);} });
+  socket.on('voice:join', (raw, ack: Ack) => { try {
+    const user=auth(socket);const channel=voiceChannelForUser(user.id,z.object({channelId:z.string()}).parse(raw).channelId);
+    leaveVoice(socket.id);
+    const alreadyPresent=voiceUsers(channel.id).some(member=>member.id===user.id);
+    const reconnectKey=voicePresenceKey(channel.id,user.id);const recent=recentVoiceDisconnects.get(reconnectKey);
+    const reconnecting=!!recent&&recent.expiresAt>Date.now();
+    if(recent){clearTimeout(recent.timer);recentVoiceDisconnects.delete(reconnectKey)}
+    voicePresence.set(socket.id,{channelId:channel.id,user});broadcastVoicePresence(channel.id);
+    const spaceId=channelSpaceId(channel.id);
+    if(spaceId&&!alreadyPresent&&!reconnecting)socket.to(`space:${spaceId}`).emit('voice:memberJoined',{channelId:channel.id,user});
+    ok(ack,{channelId:channel.id,users:voiceUsers(channel.id)});
+  } catch(e){fail(ack,e);} });
   socket.on('voice:leave', (_raw, ack: Ack) => { try { auth(socket); leaveVoice(socket.id); ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('media:capabilities', (_raw, ack: Ack) => { try { auth(socket); ok(ack,media.rtpCapabilities()); } catch(e){fail(ack,e);} });
   socket.on('media:join', (raw, ack: Ack) => { try {
@@ -182,7 +212,7 @@ io.on('connection', (socket) => {
     if(disconnected){io.to(disconnected.sharerSocketId).emit('media:p2p:peerDisconnected',{socketId:disconnected.viewerSocketId});io.to(disconnected.viewerSocketId).emit('media:p2p:peerDisconnected',{socketId:disconnected.sharerSocketId});}
     ok(ack,true);
   } catch(e){fail(ack,e);} });
-  socket.on('disconnect', () => { leaveVoice(socket.id);notifyP2PPeerLeft(socket.id);media.leaveMedia(socket.id);detachUser(socket); });
+  socket.on('disconnect', () => { leaveVoice(socket.id,true);notifyP2PPeerLeft(socket.id);media.leaveMedia(socket.id);detachUser(socket); });
 });
 
 server.listen(config.port, config.host, () => console.log(`POIO server listening on ${config.host}:${config.port}`));

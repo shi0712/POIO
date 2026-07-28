@@ -46,6 +46,7 @@ db.exec(`
 `);
 const userColumns=db.prepare('PRAGMA table_info(users)').all() as Array<{name:string}>;
 if(!userColumns.some(column=>column.name==='avatar_url'))db.exec('ALTER TABLE users ADD COLUMN avatar_url TEXT');
+if(!userColumns.some(column=>column.name==='join_sound_url'))db.exec('ALTER TABLE users ADD COLUMN join_sound_url TEXT');
 
 const backupName=/^poio-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.db$/;
 let backupRunning=false;
@@ -87,7 +88,7 @@ export function scheduleDatabaseBackups() {
 }
 
 const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
-export type PublicUser = { id: string; username: string; avatarUrl?:string };
+export type PublicUser = { id: string; username: string; avatarUrl?:string; joinSoundUrl?:string };
 
 function normalizeAttachmentName(value:string|null|undefined) {
   if(!value)return value;
@@ -116,9 +117,9 @@ export async function register(username: string, password: string) {
 }
 
 export async function login(username: string, password: string) {
-  const row = db.prepare('SELECT id,username,password_hash,avatar_url AS avatarUrl FROM users WHERE username=?').get(username) as { id: string; username: string; password_hash: string; avatarUrl?:string } | undefined;
+  const row = db.prepare('SELECT id,username,password_hash,avatar_url AS avatarUrl,join_sound_url AS joinSoundUrl FROM users WHERE username=?').get(username) as { id: string; username: string; password_hash: string; avatarUrl?:string; joinSoundUrl?:string } | undefined;
   if (!row || !(await argon2.verify(row.password_hash, password))) throw new Error('用户名或密码不正确');
-  return issueSession({ id: row.id, username: row.username });
+  return issueSession({ id: row.id, username: row.username, avatarUrl:row.avatarUrl, joinSoundUrl:row.joinSoundUrl });
 }
 
 function issueSession(user: PublicUser) {
@@ -136,14 +137,27 @@ export function resume(token: string) {
 }
 
 export function userFromToken(token: string) {
-  return db.prepare(`SELECT u.id,u.username,u.avatar_url AS avatarUrl FROM sessions s JOIN users u ON u.id=s.user_id
+  return db.prepare(`SELECT u.id,u.username,u.avatar_url AS avatarUrl,u.join_sound_url AS joinSoundUrl FROM sessions s JOIN users u ON u.id=s.user_id
     WHERE s.token_hash=? AND s.expires_at>?`).get(hashToken(token), Date.now()) as PublicUser | undefined;
 }
 
 export function updateAvatar(userId:string,avatarUrl:string|null) {
   if(avatarUrl&&!/^\/uploads\/[A-Za-z0-9_-]+\.(?:png|jpe?g|webp|gif)$/i.test(avatarUrl))throw new Error('头像文件格式无效');
   db.prepare('UPDATE users SET avatar_url=? WHERE id=?').run(avatarUrl,userId);
-  return db.prepare('SELECT id,username,avatar_url AS avatarUrl FROM users WHERE id=?').get(userId) as PublicUser;
+  return db.prepare('SELECT id,username,avatar_url AS avatarUrl,join_sound_url AS joinSoundUrl FROM users WHERE id=?').get(userId) as PublicUser;
+}
+
+export function updateJoinSound(userId:string,joinSoundUrl:string|null) {
+  if(joinSoundUrl){
+    if(!/^\/uploads\/[A-Za-z0-9_-]+\.(?:mp3|ogg|wav|m4a|aac|webm)$/i.test(joinSoundUrl))throw new Error('加入提示音仅支持 MP3、OGG、WAV、M4A、AAC 或 WebM');
+    const filename=path.basename(joinSoundUrl);
+    const soundPath=path.resolve(config.uploadPath,filename);
+    if(path.dirname(soundPath)!==path.resolve(config.uploadPath)||!existsSync(soundPath))throw new Error('加入提示音文件不存在');
+    const stats=statSync(soundPath);
+    if(!stats.isFile()||stats.size>2*1024*1024)throw new Error('加入提示音不能超过 2 MB');
+  }
+  db.prepare('UPDATE users SET join_sound_url=? WHERE id=?').run(joinSoundUrl,userId);
+  return db.prepare('SELECT id,username,avatar_url AS avatarUrl,join_sound_url AS joinSoundUrl FROM users WHERE id=?').get(userId) as PublicUser;
 }
 
 export function revokeSession(token:string) {
@@ -211,7 +225,7 @@ export function joinSpace(user: PublicUser, rawCode: string) {
 export function spaceMembers(userId:string,spaceId:string) {
   const allowed=db.prepare('SELECT 1 FROM memberships WHERE space_id=? AND user_id=?').get(spaceId,userId);
   if(!allowed)throw new Error('无法访问该社区');
-  return db.prepare(`SELECT u.id,u.username,u.avatar_url AS avatarUrl,m.role FROM memberships m JOIN users u ON u.id=m.user_id
+  return db.prepare(`SELECT u.id,u.username,u.avatar_url AS avatarUrl,u.join_sound_url AS joinSoundUrl,m.role FROM memberships m JOIN users u ON u.id=m.user_id
     WHERE m.space_id=? ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,u.username COLLATE NOCASE`).all(spaceId);
 }
 
