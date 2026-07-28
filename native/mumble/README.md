@@ -11,6 +11,7 @@ git checkout a4c981af
 git apply ..\POIO\native\mumble\poio-mumble.patch
 git apply ..\POIO\native\mumble\poio-global-hotkeys.patch
 git apply ..\POIO\native\mumble\poio-transmit-state.patch
+git apply ..\POIO\native\mumble\poio-sidecar-window.patch
 ```
 
 补丁包括：
@@ -22,6 +23,7 @@ git apply ..\POIO\native\mumble\poio-transmit-state.patch
 - Mumble 原生全局静音快捷键和真正的按住说话（按下发送、松开停止）。
 - 向 POIO 上报真实语音发送状态和按键说话按下状态，避免把环境音误显示为正在说话。
 - 禁用原生 Mumble 界面中会打断 POIO 体验的静音提示弹窗。
+- POIO 专用模式不创建 Mumble 托盘图标，并从任务栏与 Alt+Tab 隐藏原生窗口。
 
 ## 构建与打包
 

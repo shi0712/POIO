@@ -91,12 +91,16 @@ const leaveVoice = (socketId:string) => {
   voicePresence.delete(socketId);
   broadcastVoicePresence(previous.channelId);
 };
+const notifyP2PPeerLeft = (socketId:string) => {
+  const session=media.peerSession(socketId);if(!session)return;
+  io.to(`media:${session.channelId}`).emit('media:p2p:peerLeft',{socketId});
+};
 
 io.on('connection', (socket) => {
   socket.on('app:capabilities', (_raw, ack: Ack) => { ok(ack,{
     protocolVersion:1,
     serverVersion:'0.3.9',
-    features:{chat:true,attachments:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,screenReceive:true,screenPublish:true,preferredLayers:true},
+    features:{chat:true,attachments:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true},
     media:{codecs:['video/H264','video/VP8','audio/opus'],webRtcPort:config.mediaPort},
     android:{minimumVersion:1,recommendedVersion:1}
   }); });
@@ -109,7 +113,7 @@ io.on('connection', (socket) => {
     const result = await login(value.username, value.password); attachUser(socket,result.user,result.bootstrap); ok(ack,result);
   } catch(e){fail(ack,e);}});
   socket.on('auth:resume', (raw, ack: Ack) => { try { const result=resume(z.object({token:z.string().min(32)}).parse(raw).token); attachUser(socket,result.user,result.bootstrap); ok(ack,result); } catch(e){fail(ack,e);} });
-  socket.on('auth:logout', (raw, ack: Ack) => { try { const {token}=z.object({token:z.string().min(32)}).parse(raw); auth(socket); revokeSession(token); leaveVoice(socket.id); media.leaveMedia(socket.id); detachUser(socket); ok(ack,true); } catch(e){fail(ack,e);} });
+  socket.on('auth:logout', (raw, ack: Ack) => { try { const {token}=z.object({token:z.string().min(32)}).parse(raw); auth(socket); revokeSession(token); leaveVoice(socket.id); notifyP2PPeerLeft(socket.id); media.leaveMedia(socket.id); detachUser(socket); ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('user:avatar', (raw, ack: Ack) => { try {
     const current=auth(socket);const {url}=z.object({url:z.string().max(300).nullable()}).parse(raw);
     const updated=updateAvatar(current.id,url);for(const connected of io.sockets.sockets.values())if(connected.data.user?.id===updated.id)connected.data.user=updated;
@@ -133,16 +137,52 @@ io.on('connection', (socket) => {
   socket.on('voice:join', (raw, ack: Ack) => { try { const user=auth(socket); const channel=voiceChannelForUser(user.id,z.object({channelId:z.string()}).parse(raw).channelId); leaveVoice(socket.id); voicePresence.set(socket.id,{channelId:channel.id,user}); broadcastVoicePresence(channel.id); ok(ack,{channelId:channel.id,users:voiceUsers(channel.id)}); } catch(e){fail(ack,e);} });
   socket.on('voice:leave', (_raw, ack: Ack) => { try { auth(socket); leaveVoice(socket.id); ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('media:capabilities', (_raw, ack: Ack) => { try { auth(socket); ok(ack,media.rtpCapabilities()); } catch(e){fail(ack,e);} });
-  socket.on('media:join', (raw, ack: Ack) => { try { const channelId=z.object({channelId:z.string()}).parse(raw).channelId; const user=auth(socket); voiceChannelForUser(user.id,channelId); for(const room of socket.rooms)if(room.startsWith('media:'))socket.leave(room); const peers=media.joinMedia(socket.id,user.id,channelId); socket.join(`media:${channelId}`); socket.to(`media:${channelId}`).emit('media:peerJoined',{user}); ok(ack,{peers,producers:media.roomProducers(socket.id)}); } catch(e){fail(ack,e);} });
-  socket.on('media:leave', (_raw, ack: Ack) => { try { auth(socket); media.leaveMedia(socket.id); for(const room of socket.rooms)if(room.startsWith('media:'))socket.leave(room); ok(ack,true); } catch(e){fail(ack,e);} });
+  socket.on('media:join', (raw, ack: Ack) => { try {
+    const value=z.object({channelId:z.string(),p2p:z.boolean().optional()}).parse(raw);const user=auth(socket);
+    voiceChannelForUser(user.id,value.channelId);notifyP2PPeerLeft(socket.id);
+    for(const room of socket.rooms)if(room.startsWith('media:'))socket.leave(room);
+    const peers=media.joinMedia(socket.id,user.id,value.channelId,value.p2p===true);
+    socket.join(`media:${value.channelId}`);socket.to(`media:${value.channelId}`).emit('media:peerJoined',{user});
+    ok(ack,{peers,producers:media.roomProducers(socket.id),p2pEnabled:true,p2pShares:media.p2pShares(socket.id),iceServers:config.p2pIceServers});
+  } catch(e){fail(ack,e);} });
+  socket.on('media:leave', (_raw, ack: Ack) => { try { auth(socket); notifyP2PPeerLeft(socket.id);media.leaveMedia(socket.id); for(const room of socket.rooms)if(room.startsWith('media:'))socket.leave(room); ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('media:createTransport', (_raw, ack: Ack) => { void media.createTransport(socket.id).then((v)=>ok(ack,v)).catch((e)=>fail(ack,e)); });
   socket.on('media:connectTransport', (raw, ack: Ack) => { void media.connectTransport(socket.id,raw.transportId,raw.dtlsParameters).then(()=>ok(ack,true)).catch((e)=>fail(ack,e)); });
   socket.on('media:produce', (raw, ack: Ack) => { void media.produce(socket.id,raw.transportId,raw.kind,raw.rtpParameters,raw.appData).then((v)=>{ socket.to(`media:${v.channelId}`).emit('media:newProducer',{producerId:v.id,userId:v.userId,kind:v.kind,appData:v.appData}); ok(ack,{id:v.id}); }).catch((e)=>fail(ack,e)); });
   socket.on('media:consume', (raw, ack: Ack) => { void media.consume(socket.id,raw.transportId,raw.producerId,raw.rtpCapabilities).then((v)=>ok(ack,v)).catch((e)=>fail(ack,e)); });
   socket.on('media:resumeConsumer', (raw, ack: Ack) => { void media.resumeConsumer(socket.id,raw.consumerId).then(()=>ok(ack,true)).catch((e)=>fail(ack,e)); });
+  socket.on('media:closeConsumer', (raw, ack: Ack) => { try { auth(socket);const {consumerId}=z.object({consumerId:z.string()}).parse(raw);media.closeConsumer(socket.id,consumerId);ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('media:setPreferredLayers', (raw, ack: Ack) => { try { auth(socket); const value=z.object({consumerId:z.string(),spatialLayer:z.number().int().min(0).max(2),temporalLayer:z.number().int().min(0).max(2).optional()}).parse(raw); void media.setPreferredLayers(socket.id,value.consumerId,value.spatialLayer,value.temporalLayer).then(result=>ok(ack,result)).catch(error=>fail(ack,error)); } catch(e){fail(ack,e);} });
   socket.on('media:closeProducer', (raw, ack: Ack) => { try { media.closeProducer(socket.id,raw.producerId); ok(ack,true); } catch(e){fail(ack,e);} });
-  socket.on('disconnect', () => { leaveVoice(socket.id); media.leaveMedia(socket.id); detachUser(socket); });
+  socket.on('media:p2p:announce', (raw, ack: Ack) => { try {
+    auth(socket);const value=z.object({profile:z.string().max(32),hasAudio:z.boolean()}).parse(raw);
+    const announced=media.announceP2PShare(socket.id,value);
+    socket.to(`media:${announced.channelId}`).emit('media:p2p:shareStarted',announced.share);ok(ack,announced.share);
+  } catch(e){fail(ack,e);} });
+  socket.on('media:p2p:stop', (_raw, ack: Ack) => { try {
+    auth(socket);const stopped=media.stopP2PShare(socket.id);
+    if(stopped)io.to(`media:${stopped.channelId}`).emit('media:p2p:shareStopped',{socketId:socket.id});ok(ack,true);
+  } catch(e){fail(ack,e);} });
+  socket.on('media:p2p:watch', (raw, ack: Ack) => { try {
+    auth(socket);const {sharerSocketId}=z.object({sharerSocketId:z.string()}).parse(raw);
+    const session=media.requestP2PWatch(socket.id,sharerSocketId);
+    io.to(sharerSocketId).emit('media:p2p:watchRequested',{viewerSocketId:socket.id,viewerUserId:session.viewerUserId});
+    ok(ack,true);
+  } catch(e){fail(ack,e);} });
+  socket.on('media:p2p:signal', (raw, ack: Ack) => { try {
+    auth(socket);const value=z.object({targetSocketId:z.string(),description:z.any().optional(),candidate:z.any().optional()})
+      .refine(item=>item.description!==undefined||item.candidate!==undefined,'缺少 WebRTC 信令').parse(raw);
+    if(!media.canSignalP2P(socket.id,value.targetSocketId))throw new Error('无权发送该 P2P 信令');
+    io.to(value.targetSocketId).emit('media:p2p:signal',{fromSocketId:socket.id,userId:auth(socket).id,description:value.description,candidate:value.candidate});
+    ok(ack,true);
+  } catch(e){fail(ack,e);} });
+  socket.on('media:p2p:disconnect', (raw, ack: Ack) => { try {
+    auth(socket);const {peerSocketId}=z.object({peerSocketId:z.string()}).parse(raw);
+    const disconnected=media.disconnectP2P(socket.id,peerSocketId);
+    if(disconnected){io.to(disconnected.sharerSocketId).emit('media:p2p:peerDisconnected',{socketId:disconnected.viewerSocketId});io.to(disconnected.viewerSocketId).emit('media:p2p:peerDisconnected',{socketId:disconnected.sharerSocketId});}
+    ok(ack,true);
+  } catch(e){fail(ack,e);} });
+  socket.on('disconnect', () => { leaveVoice(socket.id);notifyP2PPeerLeft(socket.id);media.leaveMedia(socket.id);detachUser(socket); });
 });
 
 server.listen(config.port, config.host, () => console.log(`POIO server listening on ${config.host}:${config.port}`));

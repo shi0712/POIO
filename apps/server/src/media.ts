@@ -8,7 +8,12 @@ type Peer = {
   transports: Map<string, WebRtcTransport>;
   producers: Map<string, Producer>;
   consumers: Map<string, Consumer>;
+  p2pCapable: boolean;
+  p2pShare?: P2PShare;
+  p2pViewers: Set<string>;
 };
+
+export type P2PShare = { socketId:string; userId:string; profile:string; hasAudio:boolean };
 
 let worker: Worker;
 let router: Router;
@@ -38,11 +43,67 @@ export async function initMedia() {
 
 export const rtpCapabilities = () => router.rtpCapabilities;
 
-export function joinMedia(socketId: string, userId: string, channelId: string) {
+export function joinMedia(socketId: string, userId: string, channelId: string, p2pCapable = false) {
   leaveMedia(socketId);
-  const peer: Peer = { id: socketId, userId, channelId, transports: new Map(), producers: new Map(), consumers: new Map() };
+  const peer: Peer = {
+    id: socketId, userId, channelId, p2pCapable,
+    transports: new Map(), producers: new Map(), consumers: new Map(), p2pViewers: new Set()
+  };
   peers.set(socketId, peer);
   return [...peers.values()].filter((p) => p.channelId === channelId && p.id !== socketId).map((p) => ({socketId:p.id,userId:p.userId}));
+}
+
+export function p2pShares(socketId:string):P2PShare[] {
+  const peer=peers.get(socketId);if(!peer)return [];
+  return [...peers.values()]
+    .filter(other=>other.channelId===peer.channelId&&other.id!==socketId&&other.p2pShare)
+    .map(other=>other.p2pShare!);
+}
+
+export function announceP2PShare(socketId:string, value:{profile:string;hasAudio:boolean}) {
+  const peer=peers.get(socketId);
+  if(!peer||!peer.p2pCapable)throw new Error('当前媒体会话不支持 P2P');
+  peer.p2pShare={socketId,userId:peer.userId,profile:value.profile,hasAudio:value.hasAudio};
+  peer.p2pViewers.clear();
+  return {channelId:peer.channelId,share:peer.p2pShare};
+}
+
+export function stopP2PShare(socketId:string) {
+  const peer=peers.get(socketId);if(!peer)return;
+  const result={channelId:peer.channelId,viewerSocketIds:[...peer.p2pViewers]};
+  peer.p2pShare=undefined;peer.p2pViewers.clear();
+  return result;
+}
+
+export function requestP2PWatch(viewerSocketId:string,sharerSocketId:string) {
+  const viewer=peers.get(viewerSocketId);const sharer=peers.get(sharerSocketId);
+  if(!viewer||!viewer.p2pCapable)throw new Error('当前观看端不支持 P2P');
+  if(!sharer||!sharer.p2pShare||sharer.channelId!==viewer.channelId)throw new Error('该直连共享已结束');
+  if(sharerSocketId===viewerSocketId)throw new Error('不能观看自己的直连共享');
+  if(!sharer.p2pViewers.has(viewerSocketId)&&sharer.p2pViewers.size>=2)throw new Error('直连观看人数已满，已使用服务器转发');
+  sharer.p2pViewers.add(viewerSocketId);
+  return {sharerSocketId,viewerSocketId,viewerUserId:viewer.userId,channelId:viewer.channelId};
+}
+
+export function disconnectP2P(socketId:string,peerSocketId:string) {
+  const first=peers.get(socketId);const second=peers.get(peerSocketId);
+  if(!first||!second||first.channelId!==second.channelId)return;
+  if(first.p2pViewers.delete(peerSocketId))return {sharerSocketId:first.id,viewerSocketId:second.id};
+  if(second.p2pViewers.delete(socketId))return {sharerSocketId:second.id,viewerSocketId:first.id};
+}
+
+export function canSignalP2P(socketId:string,targetSocketId:string) {
+  const source=peers.get(socketId);const target=peers.get(targetSocketId);
+  if(!source||!target||source.channelId!==target.channelId)return false;
+  return source.p2pViewers.has(targetSocketId)||target.p2pViewers.has(socketId);
+}
+
+export function peerSession(socketId:string) {
+  const peer=peers.get(socketId);
+  return peer?{channelId:peer.channelId,p2pPeerSocketIds:[
+    ...peer.p2pViewers,
+    ...[...peers.values()].filter(other=>other.p2pViewers.has(socketId)).map(other=>other.id)
+  ]}:undefined;
 }
 
 export async function createTransport(socketId: string) {
@@ -96,6 +157,11 @@ export async function consume(socketId: string, transportId: string, producerId:
 }
 
 export async function resumeConsumer(socketId: string, consumerId: string) { await peers.get(socketId)?.consumers.get(consumerId)?.resume(); }
+export function closeConsumer(socketId:string,consumerId:string) {
+  const peer=peers.get(socketId);const consumer=peer?.consumers.get(consumerId);
+  if(!peer||!consumer)return;
+  peer.consumers.delete(consumerId);consumer.close();
+}
 export async function setPreferredLayers(socketId:string,consumerId:string,spatialLayer:number,temporalLayer?:number) {
   const consumer=peers.get(socketId)?.consumers.get(consumerId);
   if(!consumer)throw new Error('媒体消费者不存在');
@@ -113,6 +179,8 @@ export function closeProducer(socketId: string, producerId: string) {
 }
 export function leaveMedia(socketId: string) {
   const peer = peers.get(socketId); if (!peer) return;
+  for(const other of peers.values())other.p2pViewers.delete(socketId);
+  peer.p2pViewers.clear();peer.p2pShare=undefined;
   for (const producerId of [...peer.producers.keys()]) notifyProducerClosed(peer, producerId);
   for (const transport of peer.transports.values()) transport.close();
   peers.delete(socketId);

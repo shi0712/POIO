@@ -1,0 +1,57 @@
+diff --git a/src/mumble/main.cpp b/src/mumble/main.cpp
+index 476ac636..ca92983b 100644
+--- a/src/mumble/main.cpp
++++ b/src/mumble/main.cpp
+@@ -743,6 +743,11 @@ int main(int argc, char **argv) {
+ 
+ 	MumbleSSL::initialize();
+ 	CLIOptions options = parseCLI(argc, argv);
++#ifdef Q_OS_WIN
++	const bool poioSidecar = qEnvironmentVariableIsSet("POIO_MUMBLE_PIPE_SUFFIX");
++#else
++	const bool poioSidecar = false;
++#endif
+ 
+ 	if (options.quit) {
+ 		return options.exitCode;
+@@ -1098,6 +1103,20 @@ int main(int argc, char **argv) {
+ 
+ 	// Main Window
+ 	Global::get().mw = new MainWindow(nullptr);
++#ifdef Q_OS_WIN
++	if (poioSidecar) {
++		// POIO owns the entire desktop UX. Keep the native Mumble HWND available
++		// for WASAPI/ASIO and global shortcuts, but never expose another taskbar
++		// or Alt+Tab entry alongside the Electron window.
++		const HWND sidecarWindow = reinterpret_cast< HWND >(Global::get().mw->winId());
++		const LONG_PTR extendedStyle = GetWindowLongPtr(sidecarWindow, GWL_EXSTYLE);
++		SetWindowLongPtr(sidecarWindow, GWL_EXSTYLE,
++						 (extendedStyle | WS_EX_TOOLWINDOW) & ~static_cast< LONG_PTR >(WS_EX_APPWINDOW));
++		SetWindowPos(sidecarWindow, nullptr, 0, 0, 0, 0,
++					 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
++		ShowWindow(sidecarWindow, SW_HIDE);
++	}
++#endif
+ 	if (!options.startHiddenInTray) {
+ 		Global::get().mw->showRaiseWindow();
+ 	}
+@@ -1112,7 +1131,7 @@ int main(int argc, char **argv) {
+ 
+ 	// By setting the TalkingUI's position **before** making it visible tends to more reliably include the
+ 	// window's frame to be included in the positioning calculation on X11 (at least using KDE Plasma)
+-	Global::get().talkingUI->setVisible(Global::get().s.bShowTalkingUI);
++	Global::get().talkingUI->setVisible(!poioSidecar && Global::get().s.bShowTalkingUI);
+ 
+ 	QObject::connect(Global::get().mw, &MainWindow::userAddedChannelListener, Global::get().talkingUI,
+ 					 &TalkingUI::on_channelListenerAdded);
+@@ -1130,7 +1149,9 @@ int main(int argc, char **argv) {
+ 	Global::get().l = new Log();
+ 	Global::get().l->processDeferredLogs();
+ 
+-	Global::get().trayIcon = new TrayIcon();
++	if (!poioSidecar) {
++		Global::get().trayIcon = new TrayIcon();
++	}
+ 
+ #ifdef Q_OS_WIN
+ 	// Set mumble_mw_hwnd in os_win.cpp.

@@ -1,8 +1,10 @@
 import { Device } from 'mediasoup-client';
 import type { Consumer, Producer, Transport } from 'mediasoup-client/types';
 import { request, socket } from './api';
+import { P2PScreenTransport, type P2PRemoteMedia, type P2PShareAnnouncement, type P2PShareStatus } from './p2p-screen';
 
-export type RemoteMedia = { id:string;userId:string;kind:'audio'|'video';tag:string;stream:MediaStream };
+export type RemoteMedia = { id:string;userId:string;kind:'audio'|'video';tag:string;stream:MediaStream;route:'sfu'|'p2p'|'turn' };
+export type ScreenShareStatus = P2PShareStatus;
 export type ShareProfile = 'smooth'|'hd'|'fps'|'original';
 const profiles = {
   smooth: { width:1280,height:720,fps:30,bitrate:3_000_000 },
@@ -25,9 +27,30 @@ export class ScreenSession {
   private closedProducers = new Set<string>();
   private onMedia: (media: RemoteMedia[]) => void;
   private media = new Map<string, RemoteMedia>();
+  private p2pMedia = new Map<string, RemoteMedia>();
+  private knownProducers = new Map<string,{producerId:string;userId:string;kind:string;appData?:any}>();
+  private p2pUsers = new Set<string>();
+  private p2p: P2PScreenTransport;
   channelId = '';
 
-  constructor(onMedia: (media: RemoteMedia[]) => void) { this.onMedia = onMedia; }
+  constructor(onMedia: (media: RemoteMedia[]) => void,onShareStatus:(status:ScreenShareStatus)=>void=()=>{}) {
+    this.onMedia = onMedia;
+    this.p2p=new P2PScreenTransport({
+      onRemote:(items:P2PRemoteMedia[])=>{
+        this.p2pMedia=new Map(items.map(item=>[item.id,item]));
+        this.publish();
+      },
+      onRemoteConnected:userId=>{
+        this.p2pUsers.add(userId);
+        this.suppressSfuForUser(userId);
+      },
+      onRemoteDisconnected:userId=>{
+        this.p2pUsers.delete(userId);
+        void this.restoreSfuForUser(userId);
+      },
+      onStatus:onShareStatus
+    });
+  }
 
   async join(channelId: string) {
     if (this.joinPromise) await this.joinPromise.catch(()=>{});
@@ -47,13 +70,14 @@ export class ScreenSession {
     const capabilities = await request<any>('media:capabilities');
     active();
     await this.device.load({ routerRtpCapabilities: capabilities });
-    const joined = await request<{producers:Array<any>}>('media:join',{channelId});
+    const joined = await request<{producers:Array<any>;p2pEnabled?:boolean;p2pShares?:P2PShareAnnouncement[];iceServers?:RTCIceServer[]}>('media:join',{channelId,p2p:true});
     active();
     this.sendTransport = await this.makeTransport('send',epoch);
     this.recvTransport = await this.makeTransport('recv',epoch);
     active();
     socket.on('media:newProducer', this.newProducer);
     socket.on('media:producerClosed', this.producerClosed);
+    this.p2p.join(channelId,joined.p2pEnabled===true,joined.iceServers??[],joined.p2pShares??[]);
     for (const producer of joined.producers) await this.consume(producer);
     } catch(error) {
       if(epoch===this.epoch)this.clear();
@@ -79,20 +103,34 @@ export class ScreenSession {
   private newProducer = (producer: any) => { void this.consume(producer).catch(()=>{}); };
   private producerClosed = ({producerId}:{producerId:string}) => {
     this.closedProducers.add(producerId);
+    this.knownProducers.delete(producerId);
     this.removeMedia(producerId);
   };
 
   private async consume(producer: {producerId:string;userId:string;kind:string;appData?:any}) {
+    this.knownProducers.set(producer.producerId,producer);
     const epoch=this.epoch;
     const transport=this.recvTransport;
+    const tag=String(producer.appData?.mediaTag??producer.kind);
+    if(this.p2pUsers.has(producer.userId)&&(tag==='screen'||tag==='screen-audio'))return;
     if (!transport || transport.closed || this.consumers.has(producer.producerId) || this.closedProducers.has(producer.producerId)) return;
     const info = await request<any>('media:consume',{transportId:transport.id,producerId:producer.producerId,rtpCapabilities:this.device.rtpCapabilities});
-    if (epoch!==this.epoch || transport!==this.recvTransport || transport.closed || this.closedProducers.has(producer.producerId)) return;
+    if (epoch!==this.epoch || transport!==this.recvTransport || transport.closed || this.closedProducers.has(producer.producerId)) {
+      void request('media:closeConsumer',{consumerId:info.id}).catch(()=>{});
+      return;
+    }
+    const resolvedTag=String(info.appData?.mediaTag ?? producer.appData?.mediaTag ?? info.kind);
+    if(this.p2pUsers.has(producer.userId)&&(resolvedTag==='screen'||resolvedTag==='screen-audio')) {
+      void request('media:closeConsumer',{consumerId:info.id}).catch(()=>{});
+      return;
+    }
     const consumer = await transport.consume(info);
-    if (epoch!==this.epoch || transport!==this.recvTransport || transport.closed || this.closedProducers.has(producer.producerId)) { consumer.close(); return; }
+    if (epoch!==this.epoch || transport!==this.recvTransport || transport.closed || this.closedProducers.has(producer.producerId) || this.p2pUsers.has(producer.userId)) {
+      consumer.close();void request('media:closeConsumer',{consumerId:consumer.id}).catch(()=>{});return;
+    }
     this.consumers.set(producer.producerId,consumer);
     const stream = new MediaStream([consumer.track]);
-    const media = { id:producer.producerId,userId:info.userId ?? producer.userId,kind:consumer.kind as 'audio'|'video',tag:String(info.appData?.mediaTag ?? producer.appData?.mediaTag ?? consumer.kind),stream };
+    const media:RemoteMedia = { id:producer.producerId,userId:info.userId ?? producer.userId,kind:consumer.kind as 'audio'|'video',tag:resolvedTag,stream,route:'sfu' };
     this.media.set(producer.producerId,media); this.publish();
     consumer.on('trackended',()=>this.removeMedia(producer.producerId));
     consumer.on('transportclose',()=>this.removeMedia(producer.producerId));
@@ -105,9 +143,24 @@ export class ScreenSession {
     const consumer=this.consumers.get(id);
     if(!item&&!consumer)return;
     item?.stream.getTracks().forEach((track)=>track.stop());
-    this.media.delete(id); consumer?.close(); this.consumers.delete(id); this.publish();
+    this.media.delete(id);consumer?.close();this.consumers.delete(id);
+    if(consumer)void request('media:closeConsumer',{consumerId:consumer.id}).catch(()=>{});
+    this.publish();
   }
-  private publish() { this.onMedia([...this.media.values()]); }
+  private publish() { this.onMedia([...this.media.values(),...this.p2pMedia.values()]); }
+
+  private suppressSfuForUser(userId:string) {
+    for(const item of [...this.media.values()])
+      if(item.userId===userId&&(item.tag==='screen'||item.tag==='screen-audio'))this.removeMedia(item.id);
+  }
+
+  private async restoreSfuForUser(userId:string) {
+    const epoch=this.epoch;
+    for(const producer of this.knownProducers.values()) {
+      if(epoch!==this.epoch||this.p2pUsers.has(userId))return;
+      if(producer.userId===userId)await this.consume(producer).catch(()=>{});
+    }
+  }
 
   async share(sourceId:string, profile:ShareProfile, includeAudio=false) {
     if (!this.sendTransport || this.sendTransport.closed) throw new Error('屏幕共享连接未就绪，请重新尝试');
@@ -143,24 +196,30 @@ export class ScreenSession {
       throw error;
     }
     track.onended = () => { void this.stopShare(); };
+    await this.p2p.startShare(stream,profile).catch(()=>{});
     return stream;
   }
 
   async stopShare() {
     const producers=[this.screen,this.screenAudio].filter((producer):producer is Producer=>Boolean(producer));
-    if(!producers.length)return;
-    const producerIds=producers.map(producer=>producer.id);
-    this.screen=undefined;this.screenAudio=undefined;
-    for(const producer of producers)producer.close();
-    await Promise.all(producerIds.map(producerId=>request('media:closeProducer',{producerId}).catch(()=>{})));
+    if(producers.length) {
+      const producerIds=producers.map(producer=>producer.id);
+      this.screen=undefined;this.screenAudio=undefined;
+      for(const producer of producers)producer.close();
+      await Promise.all(producerIds.map(producerId=>request('media:closeProducer',{producerId}).catch(()=>{})));
+    }
+    await this.p2p.stopShare();
   }
 
   close() {
+    const joined=Boolean(this.channelId);
     this.clear();
+    if(joined)void request('media:leave').catch(()=>{});
   }
 
   private clear() {
     this.epoch++;
+    this.p2pUsers.clear();this.knownProducers.clear();this.p2pMedia.clear();this.p2p.close();
     socket.off('media:newProducer',this.newProducer);
     socket.off('media:producerClosed',this.producerClosed);
     this.screen?.close(); this.screenAudio?.close(); this.sendTransport?.close(); this.recvTransport?.close();
