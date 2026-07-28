@@ -1,6 +1,10 @@
 const CUSTOM_SOUND_LIMIT_MS=4_200;
 const MIN_CUE_INTERVAL_MS=350;
-let lastCueAt=0;
+const DEFAULT_JOIN_CUE_URL=new URL('./assets/audio/user-join.mp3',import.meta.url).href;
+const LEAVE_CUE_URL=new URL('./assets/audio/user-leave.mp3',import.meta.url).href;
+const MUTE_CUE_URL=new URL('./assets/audio/mkf-mute.mp3',import.meta.url).href;
+type CueKind='join'|'leave'|'mute';
+const lastCueAt=new Map<CueKind,number>();
 let activeAudio:HTMLAudioElement|undefined;
 let audioContext:AudioContext|undefined;
 
@@ -32,24 +36,32 @@ function playDefaultJoinCue(){
   }
 }
 
-export async function playVoiceJoinCue(customUrl?:string){
+async function playFileCue(kind:CueKind,url:string,volume:number,fallback?:()=>void){
   const now=Date.now();
-  if(now-lastCueAt<MIN_CUE_INTERVAL_MS)return;
-  lastCueAt=now;
+  if(now-(lastCueAt.get(kind)??0)<MIN_CUE_INTERVAL_MS)return;
+  lastCueAt.set(kind,now);
   activeAudio?.pause();
   activeAudio=undefined;
-  if(!customUrl){
-    playDefaultJoinCue();
-    return;
-  }
-  const audio=new Audio(customUrl);
+  const audio=new Audio(url);
   activeAudio=audio;
-  audio.volume=.58;
+  audio.volume=volume;
   audio.preload='auto';
   const stop=window.setTimeout(()=>{audio.pause();audio.currentTime=0;if(activeAudio===audio)activeAudio=undefined},CUSTOM_SOUND_LIMIT_MS);
   audio.addEventListener('ended',()=>{window.clearTimeout(stop);if(activeAudio===audio)activeAudio=undefined},{once:true});
-  audio.addEventListener('error',()=>{window.clearTimeout(stop);if(activeAudio===audio)activeAudio=undefined;playDefaultJoinCue()},{once:true});
-  try{await audio.play()}catch{window.clearTimeout(stop);if(activeAudio===audio)activeAudio=undefined;playDefaultJoinCue()}
+  audio.addEventListener('error',()=>{window.clearTimeout(stop);if(activeAudio===audio)activeAudio=undefined;fallback?.()},{once:true});
+  try{await audio.play()}catch{window.clearTimeout(stop);if(activeAudio===audio)activeAudio=undefined;fallback?.()}
+}
+
+export async function playVoiceJoinCue(customUrl?:string){
+  await playFileCue('join',customUrl??DEFAULT_JOIN_CUE_URL,.68,playDefaultJoinCue);
+}
+
+export async function playVoiceLeaveCue(){
+  await playFileCue('leave',LEAVE_CUE_URL,.68);
+}
+
+export async function playMuteCue(){
+  await playFileCue('mute',MUTE_CUE_URL,.62);
 }
 
 export async function validateJoinSound(file:File){

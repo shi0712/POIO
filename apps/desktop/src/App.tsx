@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { request, serverUrl, socket, uploadFile, type AuthPayload, type Channel, type ChatMessage, type Space, type User } from './api';
 import { ScreenSession, type RemoteMedia, type ScreenShareStatus, type ShareProfile } from './media';
-import { playVoiceJoinCue, validateJoinSound } from './voice-join-cue';
+import { playMuteCue, playVoiceJoinCue, playVoiceLeaveCue, validateJoinSound } from './voice-join-cue';
 import './fixes.css';
 
 const TOKEN_KEY='echodeck.session';
@@ -25,6 +25,7 @@ export default function App(){
   const [screenshot,setScreenshot]=useState<ScreenshotCapture>(); const [pendingScreenshot,setPendingScreenshot]=useState<QueuedScreenshot>(); const [composerExpanded,setComposerExpanded]=useState(false); const [composerPreview,setComposerPreview]=useState(false); const [avatarUploading,setAvatarUploading]=useState(false);
   const [voiceChannel,setVoiceChannel]=useState(''); const [joiningVoiceChannel,setJoiningVoiceChannel]=useState(''); const [muted,setMuted]=useState(false); const [deafened,setDeafened]=useState(false); const [transmitting,setTransmitting]=useState(false); const [pushToTalkActive,setPushToTalkActive]=useState(false); const [micLevel,setMicLevel]=useState(0); const [inputVolume,setInputVolume]=useState(100); const [outputVolume,setOutputVolume]=useState(100); const volumeTimer=useRef(0); const [memberVolumes,setMemberVolumes]=useState<Record<string,number>>({}); const [talkingMembers,setTalkingMembers]=useState<Record<string,boolean>>({}); const memberVolumeTimers=useRef<Record<string,number>>({}); const [voiceMembers,setVoiceMembers]=useState<Record<string,User[]>>({}); const [remoteMedia,setRemoteMedia]=useState<RemoteMedia[]>([]);
   const voiceJoinEpoch=useRef(0);
+  const previousMuted=useRef(false);
   const [shareOpen,setShareOpen]=useState(false); const [sources,setSources]=useState<Array<any>>([]); const [shareProfile,setShareProfile]=useState<ShareProfile>('hd'); const [shareAudio,setShareAudio]=useState(false); const [localShare,setLocalShare]=useState<MediaStream>();
   const [screenShareStatus,setScreenShareStatus]=useState<ScreenShareStatus>({sharing:false,connecting:false,directViewers:0,turnViewers:0});
   const [settingsOpen,setSettingsOpen]=useState(false); const [audioDevices,setAudioDevices]=useState<MumbleAudioDevices>(); const [settingsBusy,setSettingsBusy]=useState(false); const [joinSoundBusy,setJoinSoundBusy]=useState(false); const [voiceJoinCuesEnabled,setVoiceJoinCuesEnabled]=useState(()=>localStorage.getItem(VOICE_JOIN_CUES_KEY)!=='0');
@@ -53,6 +54,15 @@ export default function App(){
     socket.on('voice:memberJoined',joined);
     return()=>{socket.off('voice:memberJoined',joined)};
   },[user?.id,voiceChannel,voiceJoinCuesEnabled]);
+  useEffect(()=>{
+    const left=(event:{channelId:string;user:User})=>{
+      if(!voiceJoinCuesEnabled||event.channelId!==voiceChannel)return;
+      void playVoiceLeaveCue();
+    };
+    socket.on('voice:memberLeft',left);
+    return()=>{socket.off('voice:memberLeft',left)};
+  },[voiceChannel,voiceJoinCuesEnabled]);
+  useEffect(()=>{if(voiceChannel&&muted&&!previousMuted.current)void playMuteCue();previousMuted.current=muted},[muted,voiceChannel]);
   useEffect(()=>{const updated=(next:User)=>{setUser(current=>current?.id===next.id?next:current);setSpaceMembers(all=>all.map(member=>member.id===next.id?{...member,...next}:member));setVoiceMembers(all=>Object.fromEntries(Object.entries(all).map(([key,members])=>[key,members.map(member=>member.id===next.id?{...member,...next}:member)])));setMessages(all=>all.map(message=>message.userId===next.id?{...message,avatarUrl:next.avatarUrl}:message))};socket.on('user:updated',updated);return()=>{socket.off('user:updated',updated)}},[]);
   useEffect(()=>{if(!channelId||!user)return;let disposed=false;stickToLatestRef.current=true;setMessageAtBottom(true);setMessages([]);request('channel:watch',{channelId}).catch(showError);request<ChatMessage[]>('chat:history',{channelId}).then(value=>{if(!disposed)setMessages(value.slice(-500))}).catch(showError);const incoming=(m:ChatMessage)=>{if(!disposed&&m.channelId===channelId)setMessages(v=>[...v,m].slice(-500))};socket.on('chat:message',incoming);return()=>{disposed=true;socket.off('chat:message',incoming)}},[channelId,user,reconnectEpoch]);
   useLayoutEffect(()=>{const list=messageListRef.current;if(!list||!stickToLatestRef.current)return;list.scrollTop=list.scrollHeight;setMessageAtBottom(true)},[messages,channelId]);
@@ -263,9 +273,9 @@ function AudioSettings({connected,devices,busy,micLevel,joinSoundBusy,joinSoundU
         <p className="shortcut-note">录入时按 Esc 取消。全局监听由 POIO 的 Mumble 原生语音核心完成，不会记录输入内容。</p>
       </section>
       <section className="join-sound-settings">
-        <div className="join-sound-heading"><BellRing/><span><b>加入频道提示音</b><small>进入语音频道时，你和频道里的其他成员都会听到你的加入音。</small></span></div>
+        <div className="join-sound-heading"><BellRing/><span><b>语音频道提示音</b><small>进入或离开语音频道时，你和频道里的其他成员都会听到相应提示音。</small></span></div>
         <label className="preference-row join-cue-toggle">
-          <Volume2/><span><strong>播放加入提示音</strong><small>关闭后，你不会听到自己或他人的默认、自定义加入音。</small></span>
+          <Volume2/><span><strong>播放进出频道提示音</strong><small>关闭后，你不会听到自己或他人的进入、离开提示音。</small></span>
           <input type="checkbox" checked={voiceJoinCuesEnabled} onChange={event=>onToggleVoiceJoinCues(event.target.checked)}/>
         </label>
         <div className="join-sound-file">

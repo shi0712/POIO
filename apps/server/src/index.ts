@@ -44,7 +44,7 @@ app.post('/api/uploads',upload.single('file'),(req,res)=>{
   if(!req.file){res.status(400).json({error:'没有收到文件'});return;}
   res.json({url:`/uploads/${req.file.filename}`,name:req.file.originalname,size:req.file.size,mime:req.file.mimetype||'application/octet-stream'});
 });
-app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '0.4.0' }));
+app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '0.4.1' }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: config.corsOrigin }, maxHttpBufferSize: 2_000_000, transports: ['websocket','polling'] });
 
@@ -67,6 +67,10 @@ const voicePresenceKey = (channelId:string,userId:string) => `${channelId}:${use
 const broadcastVoicePresence = (channelId:string) => {
   const spaceId=channelSpaceId(channelId);
   if(spaceId)io.to(`space:${spaceId}`).emit('voice:presence',{channelId,users:voiceUsers(channelId)});
+};
+const broadcastVoiceMemberLeft = (channelId:string,user:PublicUser) => {
+  const spaceId=channelSpaceId(channelId);
+  if(spaceId)io.to(`space:${spaceId}`).emit('voice:memberLeft',{channelId,user});
 };
 const onlineUserIds = (spaceId:string) => {
   const members=new Set(spaceMemberIds(spaceId));
@@ -91,14 +95,21 @@ const leaveVoice = (socketId:string,unexpected=false) => {
   const previous=voicePresence.get(socketId);
   if(!previous)return;
   voicePresence.delete(socketId);
-  if(unexpected&&!voiceUsers(previous.channelId).some(user=>user.id===previous.user.id)){
-    const key=voicePresenceKey(previous.channelId,previous.user.id);
-    const old=recentVoiceDisconnects.get(key);if(old)clearTimeout(old.timer);
+  const key=voicePresenceKey(previous.channelId,previous.user.id);
+  const stillPresent=voiceUsers(previous.channelId).some(user=>user.id===previous.user.id);
+  const old=recentVoiceDisconnects.get(key);
+  if(old){clearTimeout(old.timer);recentVoiceDisconnects.delete(key)}
+  if(!stillPresent&&unexpected){
     const expiresAt=Date.now()+10_000;
-    const timer=setTimeout(()=>recentVoiceDisconnects.delete(key),10_000);
+    const timer=setTimeout(()=>{
+      const recent=recentVoiceDisconnects.get(key);
+      if(!recent||recent.timer!==timer)return;
+      recentVoiceDisconnects.delete(key);
+      if(!voiceUsers(previous.channelId).some(user=>user.id===previous.user.id))broadcastVoiceMemberLeft(previous.channelId,previous.user);
+    },10_000);
     timer.unref();
     recentVoiceDisconnects.set(key,{expiresAt,timer});
-  }
+  }else if(!stillPresent)broadcastVoiceMemberLeft(previous.channelId,previous.user);
   broadcastVoicePresence(previous.channelId);
 };
 const publishUserUpdate = (updated:PublicUser,spaceIds:string[]) => {
@@ -116,8 +127,8 @@ const notifyP2PPeerLeft = (socketId:string) => {
 io.on('connection', (socket) => {
   socket.on('app:capabilities', (_raw, ack: Ack) => { ok(ack,{
     protocolVersion:1,
-    serverVersion:'0.4.0',
-    features:{chat:true,attachments:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,customJoinSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true},
+    serverVersion:'0.4.1',
+    features:{chat:true,attachments:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,voiceLeaveCues:true,customJoinSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true},
     media:{codecs:['video/H264','video/VP8','audio/opus'],webRtcPort:config.mediaPort},
     android:{minimumVersion:1,recommendedVersion:1}
   }); });
