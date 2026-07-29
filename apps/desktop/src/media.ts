@@ -1,16 +1,17 @@
 import { Device } from 'mediasoup-client';
 import type { Consumer, Producer, Transport } from 'mediasoup-client/types';
 import { request, socket } from './api';
-import { P2PScreenTransport, type P2PRemoteMedia, type P2PShareAnnouncement, type P2PShareStatus } from './p2p-screen';
+import { P2PScreenTransport, type P2PPeerAnnouncement, type P2PRemoteMedia, type P2PShareAnnouncement, type P2PShareStatus, type ScreenDiagnostics } from './p2p-screen';
 
-export type RemoteMedia = { id:string;userId:string;kind:'audio'|'video';tag:string;stream:MediaStream;route:'sfu'|'p2p'|'turn' };
+export type RemoteMedia = { id:string;userId:string;kind:'audio'|'video';tag:string;stream:MediaStream;route:'sfu'|'p2p'|'turn';diagnostics?:ScreenDiagnostics };
 export type ScreenShareStatus = P2PShareStatus;
+export type { ScreenDiagnostics };
 export type ShareProfile = 'smooth'|'hd'|'fps'|'original';
 const profiles = {
   smooth: { width:1280,height:720,fps:30,bitrate:3_000_000 },
-  hd: { width:1920,height:1080,fps:30,bitrate:7_000_000 },
-  fps: { width:1920,height:1080,fps:60,bitrate:12_000_000 },
-  original: { width:7680,height:4320,fps:60,bitrate:25_000_000 }
+  hd: { width:1920,height:1080,fps:30,bitrate:9_000_000 },
+  fps: { width:1920,height:1080,fps:60,bitrate:18_000_000 },
+  original: { width:7680,height:4320,fps:60,bitrate:35_000_000 }
 } as const;
 
 // Video-only screen sharing. Voice is deliberately handled by the bundled
@@ -48,7 +49,8 @@ export class ScreenSession {
         this.p2pUsers.delete(userId);
         void this.restoreSfuForUser(userId);
       },
-      onStatus:onShareStatus
+      onStatus:onShareStatus,
+      onSfuFallbackRequired:required=>this.setSfuFallbackRequired(required)
     });
   }
 
@@ -70,14 +72,14 @@ export class ScreenSession {
     const capabilities = await request<any>('media:capabilities');
     active();
     await this.device.load({ routerRtpCapabilities: capabilities });
-    const joined = await request<{producers:Array<any>;p2pEnabled?:boolean;p2pShares?:P2PShareAnnouncement[];iceServers?:RTCIceServer[]}>('media:join',{channelId,p2p:true});
+    const joined = await request<{peers?:P2PPeerAnnouncement[];producers:Array<any>;p2pEnabled?:boolean;p2pShares?:P2PShareAnnouncement[];iceServers?:RTCIceServer[]}>('media:join',{channelId,p2p:true});
     active();
     this.sendTransport = await this.makeTransport('send',epoch);
     this.recvTransport = await this.makeTransport('recv',epoch);
     active();
     socket.on('media:newProducer', this.newProducer);
     socket.on('media:producerClosed', this.producerClosed);
-    this.p2p.join(channelId,joined.p2pEnabled===true,joined.iceServers??[],joined.p2pShares??[]);
+    this.p2p.join(channelId,joined.p2pEnabled===true,joined.iceServers??[],joined.p2pShares??[],joined.peers??[]);
     for (const producer of joined.producers) await this.consume(producer);
     } catch(error) {
       if(epoch===this.epoch)this.clear();
@@ -184,10 +186,16 @@ export class ScreenSession {
           {rid:'h',scaleResolutionDownBy:1,maxBitrate:setting.bitrate,maxFramerate:setting.fps}
         ];
     try{
-      this.screen = await this.sendTransport.produce({track,encodings,codec:h264,appData:{mediaTag:'screen',profile}} as any);
+      this.screen = await this.sendTransport.produce({
+        track,encodings,codec:h264,appData:{mediaTag:'screen',profile},
+        stopTracks:false,disableTrackOnPause:false,zeroRtpOnPause:true
+      } as any);
       const audioTrack=stream.getAudioTracks()[0];
       if(includeAudio&&!audioTrack)throw new Error('所选窗口不支持系统声音，请选择整个屏幕或关闭“共享系统声音”');
-      if(audioTrack)this.screenAudio=await this.sendTransport.produce({track:audioTrack,appData:{mediaTag:'screen-audio'}} as any);
+      if(audioTrack)this.screenAudio=await this.sendTransport.produce({
+        track:audioTrack,appData:{mediaTag:'screen-audio'},
+        stopTracks:false,disableTrackOnPause:false,zeroRtpOnPause:true
+      } as any);
     }catch(error){
       const ids=[this.screen?.id,this.screenAudio?.id].filter((id):id is string=>Boolean(id));
       this.screen?.close();this.screenAudio?.close();this.screen=undefined;this.screenAudio=undefined;
@@ -209,6 +217,14 @@ export class ScreenSession {
       await Promise.all(producerIds.map(producerId=>request('media:closeProducer',{producerId}).catch(()=>{})));
     }
     await this.p2p.stopShare();
+  }
+
+  private setSfuFallbackRequired(required:boolean) {
+    for(const producer of [this.screen,this.screenAudio]) {
+      if(!producer||producer.closed)continue;
+      if(required&&producer.paused)producer.resume();
+      if(!required&&!producer.paused)producer.pause();
+    }
   }
 
   close() {

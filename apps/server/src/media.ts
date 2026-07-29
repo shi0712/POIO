@@ -50,7 +50,9 @@ export function joinMedia(socketId: string, userId: string, channelId: string, p
     transports: new Map(), producers: new Map(), consumers: new Map(), p2pViewers: new Set()
   };
   peers.set(socketId, peer);
-  return [...peers.values()].filter((p) => p.channelId === channelId && p.id !== socketId).map((p) => ({socketId:p.id,userId:p.userId}));
+  return [...peers.values()]
+    .filter((p) => p.channelId === channelId && p.id !== socketId)
+    .map((p) => ({socketId:p.id,userId:p.userId,p2pCapable:p.p2pCapable}));
 }
 
 export function p2pShares(socketId:string):P2PShare[] {

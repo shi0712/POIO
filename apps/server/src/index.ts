@@ -183,7 +183,7 @@ io.on('connection', (socket) => {
     voiceChannelForUser(user.id,value.channelId);notifyP2PPeerLeft(socket.id);
     for(const room of socket.rooms)if(room.startsWith('media:'))socket.leave(room);
     const peers=media.joinMedia(socket.id,user.id,value.channelId,value.p2p===true);
-    socket.join(`media:${value.channelId}`);socket.to(`media:${value.channelId}`).emit('media:peerJoined',{user});
+    socket.join(`media:${value.channelId}`);socket.to(`media:${value.channelId}`).emit('media:peerJoined',{socketId:socket.id,user,p2pCapable:value.p2p===true});
     ok(ack,{peers,producers:media.roomProducers(socket.id),p2pEnabled:true,p2pShares:media.p2pShares(socket.id),iceServers:config.p2pIceServers});
   } catch(e){fail(ack,e);} });
   socket.on('media:leave', (_raw, ack: Ack) => { try { auth(socket); notifyP2PPeerLeft(socket.id);media.leaveMedia(socket.id); for(const room of socket.rooms)if(room.startsWith('media:'))socket.leave(room); ok(ack,true); } catch(e){fail(ack,e);} });
