@@ -8,9 +8,9 @@ import { nanoid } from 'nanoid';
 import { Server } from 'socket.io';
 import { z } from 'zod';
 import { config } from './config.js';
-import { bootstrap, channelMessages, channelSpaceId, createChannel, createMessage, createSpace, createSpaceInvite, joinSpace, login, previewSpaceInvite, register, resume, revokeSession, scheduleDatabaseBackups, spaceMemberIds, spaceMembers, updateAvatar, updateJoinSound, userFromToken, voiceChannelForUser, type PublicUser } from './database.js';
+import { bootstrap, channelMessages, channelSpaceId, createChannel, createMessage, createSpace, createSpaceInvite, deleteChannel, joinSpace, login, previewSpaceInvite, register, removeSpaceMember, renameChannel, renameSpace, resume, revokeSession, scheduleDatabaseBackups, spaceMemberIds, spaceMembers, updateAvatar, updateJoinSound, updateMemberModeration, userFromToken, voiceChannelForUser, type PublicUser } from './database.js';
 import * as media from './media.js';
-import { claimMumbleUsername, ensureVoiceChannel, mumbleChannelName } from './mumble-control.js';
+import { claimMumbleUsername, ensureVoiceChannel, kickMumbleUser, mumbleChannelName, removeVoiceChannel, setMumbleUserMuted } from './mumble-control.js';
 
 const app = express();
 app.use(cors({ origin: config.corsOrigin }));
@@ -44,7 +44,7 @@ app.post('/api/uploads',upload.single('file'),(req,res)=>{
   if(!req.file){res.status(400).json({error:'没有收到文件'});return;}
   res.json({url:`/uploads/${req.file.filename}`,name:req.file.originalname,size:req.file.size,mime:req.file.mimetype||'application/octet-stream'});
 });
-app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '0.4.1' }));
+app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '0.5.0' }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: config.corsOrigin }, maxHttpBufferSize: 2_000_000, transports: ['websocket','polling'] });
 
@@ -123,11 +123,29 @@ const notifyP2PPeerLeft = (socketId:string) => {
   const session=media.peerSession(socketId);if(!session)return;
   io.to(`media:${session.channelId}`).emit('media:p2p:peerLeft',{socketId});
 };
+const socketsForUser = (userId:string) =>
+  [...io.sockets.sockets.values()].filter(connected=>connected.data.user?.id===userId);
+const forceUserOutOfSpace = async(spaceId:string,userId:string,reason:string) => {
+  const shouldKick=[...voicePresence.values()].some(entry=>entry.user.id===userId&&channelSpaceId(entry.channelId)===spaceId);
+  if(shouldKick)await kickMumbleUser(userId,reason).catch(error=>console.error('Mumble member kick failed',error));
+  for(const connected of socketsForUser(userId)){
+    const presence=voicePresence.get(connected.id);
+    if(presence&&channelSpaceId(presence.channelId)===spaceId){
+      leaveVoice(connected.id);
+      notifyP2PPeerLeft(connected.id);
+      media.leaveMedia(connected.id);
+      connected.emit('voice:forcedLeave',{spaceId,reason});
+    }
+    connected.leave(`space:${spaceId}`);
+    connected.data.spaceIds=(connected.data.spaceIds??[]).filter((id:string)=>id!==spaceId);
+    connected.emit('space:removed',{spaceId,reason});
+  }
+};
 
 io.on('connection', (socket) => {
   socket.on('app:capabilities', (_raw, ack: Ack) => { ok(ack,{
     protocolVersion:1,
-    serverVersion:'0.4.1',
+    serverVersion:'0.5.0',
     features:{chat:true,attachments:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,voiceLeaveCues:true,customJoinSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true},
     media:{codecs:['video/H264','video/VP8','audio/opus'],webRtcPort:config.mediaPort},
     android:{minimumVersion:1,recommendedVersion:1}
@@ -159,13 +177,54 @@ io.on('connection', (socket) => {
   socket.on('space:join', (raw, ack: Ack) => { try { const {code}=z.object({code:z.string().trim().min(6).max(300)}).parse(raw); const user=auth(socket); const space=joinSpace(user,code); socket.join(`space:${space.id}`); socket.data.spaceIds=[...new Set([...(socket.data.spaceIds??[]),space.id])]; io.to(`space:${space.id}`).emit('space:memberJoined',{spaceId:space.id,user}); ok(ack,space); broadcastSpacePresence(space.id); } catch(e){fail(ack,e);} });
   socket.on('space:members', (raw, ack: Ack) => { try { const {spaceId}=z.object({spaceId:z.string()}).parse(raw); const user=auth(socket); ok(ack,spaceMembers(user.id,spaceId)); } catch(e){fail(ack,e);} });
   socket.on('space:presence', (raw, ack: Ack) => { try { const {spaceId}=z.object({spaceId:z.string()}).parse(raw); const user=auth(socket); spaceMembers(user.id,spaceId); ok(ack,onlineUserIds(spaceId)); } catch(e){fail(ack,e);} });
-  socket.on('channel:create', async (raw, ack: Ack) => { try { const v=z.object({spaceId:z.string(),name:z.string().trim().min(1).max(32),kind:z.enum(['text','voice'])}).parse(raw); const channel=createChannel(auth(socket),v.spaceId,v.name,v.kind); if(channel.kind==='voice')await ensureVoiceChannel(channel.id); io.emit('channel:created',channel); ok(ack,channel); } catch(e){fail(ack,e);} });
+  socket.on('space:update', (raw, ack: Ack) => { try { const value=z.object({spaceId:z.string(),name:z.string().trim().min(2).max(32)}).parse(raw); const updated=renameSpace(auth(socket),value.spaceId,value.name); io.to(`space:${value.spaceId}`).emit('space:updated',updated); ok(ack,updated); } catch(e){fail(ack,e);} });
+  socket.on('space:moderateMember', async (raw, ack: Ack) => { try {
+    const value=z.object({spaceId:z.string(),userId:z.string(),textMuted:z.boolean().optional(),voiceMuted:z.boolean().optional()}).refine(item=>item.textMuted!==undefined||item.voiceMuted!==undefined,'没有需要修改的限制').parse(raw);
+    const updated=updateMemberModeration(auth(socket),value.spaceId,value.userId,{textMuted:value.textMuted,voiceMuted:value.voiceMuted});
+    const targetIsInThisSpace=[...voicePresence.values()].some(entry=>
+      entry.user.id===value.userId&&channelSpaceId(entry.channelId)===value.spaceId
+    );
+    if(value.voiceMuted!==undefined&&targetIsInThisSpace)await setMumbleUserMuted(value.userId,value.voiceMuted);
+    io.to(`space:${value.spaceId}`).emit('space:memberModeration',updated);
+    for(const connected of socketsForUser(value.userId))connected.emit('space:moderationChanged',updated);
+    ok(ack,updated);
+  } catch(e){fail(ack,e);} });
+  socket.on('space:removeMember', async (raw, ack: Ack) => { try {
+    const value=z.object({spaceId:z.string(),userId:z.string()}).parse(raw);
+    const removed=removeSpaceMember(auth(socket),value.spaceId,value.userId);
+    await forceUserOutOfSpace(value.spaceId,value.userId,'你已被社区拥有者移出社区');
+    io.to(`space:${value.spaceId}`).emit('space:memberRemoved',removed);
+    broadcastSpacePresence(value.spaceId);
+    ok(ack,removed);
+  } catch(e){fail(ack,e);} });
+  socket.on('channel:create', async (raw, ack: Ack) => { try { const v=z.object({spaceId:z.string(),name:z.string().trim().min(1).max(32),kind:z.enum(['text','voice'])}).parse(raw); const channel=createChannel(auth(socket),v.spaceId,v.name,v.kind); if(channel.kind==='voice')await ensureVoiceChannel(channel.id); io.to(`space:${v.spaceId}`).emit('channel:created',channel); ok(ack,channel); } catch(e){fail(ack,e);} });
+  socket.on('channel:update', (raw, ack: Ack) => { try { const value=z.object({channelId:z.string(),name:z.string().trim().min(1).max(32)}).parse(raw); const updated=renameChannel(auth(socket),value.channelId,value.name); io.to(`space:${updated.spaceId}`).emit('channel:updated',updated); ok(ack,updated); } catch(e){fail(ack,e);} });
+  socket.on('channel:delete', (raw, ack: Ack) => { try {
+    const {channelId}=z.object({channelId:z.string()}).parse(raw);
+    const removed=deleteChannel(auth(socket),channelId);
+    if(removed.kind==='voice'){
+      const affected=[...voicePresence.entries()].filter(([,entry])=>entry.channelId===channelId);
+      const users=new Set(affected.map(([,entry])=>entry.user.id));
+      for(const userId of users)void kickMumbleUser(userId,'语音频道已被删除').catch(error=>console.error('Mumble channel member kick failed',error));
+      for(const [socketId] of affected){
+        const connected=io.sockets.sockets.get(socketId);
+        leaveVoice(socketId);
+        notifyP2PPeerLeft(socketId);
+        media.leaveMedia(socketId);
+        connected?.emit('voice:forcedLeave',{spaceId:removed.spaceId,channelId,reason:'语音频道已被删除'});
+      }
+      void removeVoiceChannel(channelId).catch(error=>console.error('Mumble channel removal failed',error));
+    }
+    io.to(`space:${removed.spaceId}`).emit('channel:deleted',removed);
+    ok(ack,removed);
+  } catch(e){fail(ack,e);} });
   socket.on('chat:history', (raw, ack: Ack) => { try { ok(ack,channelMessages(auth(socket).id,z.object({channelId:z.string()}).parse(raw).channelId)); } catch(e){fail(ack,e);} });
   socket.on('chat:send', (raw, ack: Ack) => { try { const v=z.object({channelId:z.string(),body:z.string().trim().max(4000).default(''),attachment:z.object({url:z.string().startsWith('/uploads/'),name:z.string().min(1).max(255),size:z.number().int().max(50*1024*1024),mime:z.string().max(128)}).optional()}).refine(v=>v.body.length>0||v.attachment,'消息不能为空').parse(raw); const user=auth(socket); const msg=createMessage(user,v.channelId,v.body,v.attachment); io.to(`channel:${v.channelId}`).emit('chat:message',msg); const spaceId=channelSpaceId(v.channelId); if(spaceId)io.to(`space:${spaceId}`).emit('chat:activity',{channelId:v.channelId,messageId:msg.id,userId:user.id}); ok(ack,msg); } catch(e){fail(ack,e);} });
-  socket.on('channel:watch', (raw, ack: Ack) => { try { const channelId=z.object({channelId:z.string()}).parse(raw).channelId; auth(socket); for (const room of socket.rooms) if(room.startsWith('channel:')) socket.leave(room); socket.join(`channel:${channelId}`); ok(ack,true); } catch(e){fail(ack,e);} });
-  socket.on('voice:credentials', async (raw, ack: Ack) => { try { const user=auth(socket); const channel=voiceChannelForUser(user.id,z.object({channelId:z.string()}).parse(raw).channelId); const username=`ed_${user.id}`; await ensureVoiceChannel(channel.id); await claimMumbleUsername(username); ok(ack,{host:config.mumbleHost,port:config.mumblePort,username,password:config.mumblePassword,channelName:mumbleChannelName(channel.id)}); } catch(e){fail(ack,e);} });
-  socket.on('voice:join', (raw, ack: Ack) => { try {
+  socket.on('channel:watch', (raw, ack: Ack) => { try { const channelId=z.object({channelId:z.string()}).parse(raw).channelId; const user=auth(socket); const spaceId=channelSpaceId(channelId);if(!spaceId)throw new Error('频道不存在');spaceMembers(user.id,spaceId);for (const room of socket.rooms) if(room.startsWith('channel:')) socket.leave(room); socket.join(`channel:${channelId}`); ok(ack,true); } catch(e){fail(ack,e);} });
+  socket.on('voice:credentials', async (raw, ack: Ack) => { try { const user=auth(socket); const channel=voiceChannelForUser(user.id,z.object({channelId:z.string()}).parse(raw).channelId); const username=`ed_${user.id}`; await ensureVoiceChannel(channel.id); await claimMumbleUsername(username); ok(ack,{host:config.mumbleHost,port:config.mumblePort,username,password:config.mumblePassword,channelName:mumbleChannelName(channel.id),voiceMuted:channel.voiceMuted}); } catch(e){fail(ack,e);} });
+  socket.on('voice:join', async (raw, ack: Ack) => { try {
     const user=auth(socket);const channel=voiceChannelForUser(user.id,z.object({channelId:z.string()}).parse(raw).channelId);
+    if(channel.voiceMuted)await setMumbleUserMuted(user.id,true);
     leaveVoice(socket.id);
     const alreadyPresent=voiceUsers(channel.id).some(member=>member.id===user.id);
     const reconnectKey=voicePresenceKey(channel.id,user.id);const recent=recentVoiceDisconnects.get(reconnectKey);
@@ -174,7 +233,7 @@ io.on('connection', (socket) => {
     voicePresence.set(socket.id,{channelId:channel.id,user});broadcastVoicePresence(channel.id);
     const spaceId=channelSpaceId(channel.id);
     if(spaceId&&!alreadyPresent&&!reconnecting)socket.to(`space:${spaceId}`).emit('voice:memberJoined',{channelId:channel.id,user});
-    ok(ack,{channelId:channel.id,users:voiceUsers(channel.id)});
+    ok(ack,{channelId:channel.id,users:voiceUsers(channel.id),moderation:{voiceMuted:channel.voiceMuted}});
   } catch(e){fail(ack,e);} });
   socket.on('voice:leave', (_raw, ack: Ack) => { try { auth(socket); leaveVoice(socket.id); ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('media:capabilities', (_raw, ack: Ack) => { try { auth(socket); ok(ack,media.rtpCapabilities()); } catch(e){fail(ack,e);} });
@@ -189,6 +248,7 @@ io.on('connection', (socket) => {
   socket.on('media:leave', (_raw, ack: Ack) => { try { auth(socket); notifyP2PPeerLeft(socket.id);media.leaveMedia(socket.id); for(const room of socket.rooms)if(room.startsWith('media:'))socket.leave(room); ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('media:createTransport', (_raw, ack: Ack) => { void media.createTransport(socket.id).then((v)=>ok(ack,v)).catch((e)=>fail(ack,e)); });
   socket.on('media:connectTransport', (raw, ack: Ack) => { void media.connectTransport(socket.id,raw.transportId,raw.dtlsParameters).then(()=>ok(ack,true)).catch((e)=>fail(ack,e)); });
+  socket.on('media:closeTransport', (raw, ack: Ack) => { try { auth(socket);const {transportId}=z.object({transportId:z.string()}).parse(raw);media.closeTransport(socket.id,transportId);ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('media:produce', (raw, ack: Ack) => { void media.produce(socket.id,raw.transportId,raw.kind,raw.rtpParameters,raw.appData).then((v)=>{ socket.to(`media:${v.channelId}`).emit('media:newProducer',{producerId:v.id,userId:v.userId,kind:v.kind,appData:v.appData}); ok(ack,{id:v.id}); }).catch((e)=>fail(ack,e)); });
   socket.on('media:consume', (raw, ack: Ack) => { void media.consume(socket.id,raw.transportId,raw.producerId,raw.rtpCapabilities).then((v)=>ok(ack,v)).catch((e)=>fail(ack,e)); });
   socket.on('media:resumeConsumer', (raw, ack: Ack) => { void media.resumeConsumer(socket.id,raw.consumerId).then(()=>ok(ack,true)).catch((e)=>fail(ack,e)); });

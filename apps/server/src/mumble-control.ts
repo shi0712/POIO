@@ -21,6 +21,15 @@ async function getServer() {
 }
 
 export function mumbleChannelName(channelId:string){return `ed-${channelId}`;}
+const mumbleUsername=(userId:string)=>`ed_${userId}`;
+
+async function resetControl() {
+  server=undefined;
+  if(communicator){
+    await communicator.destroy().catch(()=>{});
+    communicator=undefined;
+  }
+}
 
 export async function claimMumbleUsername(username:string) {
   try {
@@ -30,8 +39,41 @@ export async function claimMumbleUsername(username:string) {
       if(user.name===username)await instance.kickUser(session,'连接已由新的 POIO 会话接管',context);
     }
   } catch(error) {
-    server=undefined;
-    if(communicator){await communicator.destroy().catch(()=>{});communicator=undefined;}
+    await resetControl();
+    throw error;
+  }
+}
+
+export async function setMumbleUserMuted(userId:string,muted:boolean) {
+  try{
+    const instance=await getServer();
+    const users=await instance.getUsers(context) as Map<number,{name:string;mute:boolean}>;
+    for(const user of users.values()){
+      if(user.name!==mumbleUsername(userId))continue;
+      user.mute=muted;
+      await instance.setState(user,context);
+      return true;
+    }
+    return false;
+  }catch(error){
+    await resetControl();
+    throw error;
+  }
+}
+
+export async function kickMumbleUser(userId:string,reason:string) {
+  try{
+    const instance=await getServer();
+    const users=await instance.getUsers(context) as Map<number,{session:number;name:string}>;
+    for(const [session,user] of users){
+      if(user.name===mumbleUsername(userId)){
+        await instance.kickUser(session,reason,context);
+        return true;
+      }
+    }
+    return false;
+  }catch(error){
+    await resetControl();
     throw error;
   }
 }
@@ -45,12 +87,28 @@ export function ensureVoiceChannel(channelId:string) {
       for(const channel of channels.values())if(channel.name===name)return name;
       await instance.addChannel(name,0,context);return name;
     } catch(error) {
-      server=undefined;
-      if(communicator){await communicator.destroy().catch(()=>{});communicator=undefined;}
+      await resetControl();
       throw error;
     } finally {pending.delete(channelId);}
   })();
   pending.set(channelId,operation);return operation;
+}
+
+export async function removeVoiceChannel(channelId:string) {
+  try{
+    const name=mumbleChannelName(channelId);
+    const instance=await getServer();
+    const channels=await instance.getChannels(context) as Map<number,{name:string}>;
+    for(const [id,channel] of channels){
+      if(channel.name===name){
+        await instance.removeChannel(id,context);
+        break;
+      }
+    }
+  }catch(error){
+    await resetControl();
+    throw error;
+  }
 }
 
 export async function closeMumbleControl(){server=undefined;if(communicator){await communicator.destroy();communicator=undefined;}}

@@ -11,8 +11,18 @@ declare global {
   interface Window {
     echodeck?: {
       window: { minimize(): Promise<void>; maximize(): Promise<void>; close(): Promise<void> };
-      getDesktopSources(): Promise<Array<{id:string;name:string;thumbnail:string;appIcon?:string}>>;
+      getDesktopSources(): Promise<Array<{id:string;nativeId?:string;name:string;thumbnail:string;appIcon?:string}>>;
       captureScreenshot(): Promise<{dataUrl:string;width:number;height:number;displayName:string}>;
+      nativeShare: {
+        available():Promise<boolean>;
+        command<T=unknown>(method:string,params?:Record<string,unknown>):Promise<T>;
+        resolve(requestId:string,ok:boolean,result?:unknown,error?:string):Promise<void>;
+        onMessage(callback:(message:
+          |{kind:'request';requestId:string;request:string;data:unknown}
+          |{kind:'event';event:string;data:unknown}
+          |{kind:'runtime';state:'started'|'stopped'|'error';error?:string}
+        )=>void):()=>void;
+      };
       diagnostics(): Promise<string>;
       preferences: { get():Promise<DesktopPreferences>;set(patch:Partial<DesktopPreferences>):Promise<DesktopPreferences> };
       invite: { pending():Promise<string|undefined>;onReceived(callback:()=>void):()=>void };

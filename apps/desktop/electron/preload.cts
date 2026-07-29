@@ -8,6 +8,12 @@ contextBridge.exposeInMainWorld('echodeck', {
   },
   getDesktopSources: () => ipcRenderer.invoke('desktop:sources'),
   captureScreenshot: () => ipcRenderer.invoke('desktop:capture'),
+  nativeShare: {
+    available: () => ipcRenderer.invoke('native-share:available'),
+    command: (method:string,params:Record<string,unknown>={}) => ipcRenderer.invoke('native-share:command',method,params),
+    resolve: (requestId:string,ok:boolean,result?:unknown,error?:string) => ipcRenderer.invoke('native-share:resolve',requestId,ok,result,error),
+    onMessage: (callback:(message:unknown)=>void) => { const listener=(_event:Electron.IpcRendererEvent,message:unknown)=>callback(message);ipcRenderer.on('native-share:message',listener);return()=>ipcRenderer.removeListener('native-share:message',listener) }
+  },
   diagnostics: () => ipcRenderer.invoke('diagnostics:get'),
   preferences: {
     get: () => ipcRenderer.invoke('preferences:get'),

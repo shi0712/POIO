@@ -113,10 +113,14 @@ export async function createTransport(socketId: string) {
   const transport = await router.createWebRtcTransport({
     webRtcServer,
     enableUdp: true, enableTcp: true, preferUdp: true,
-    initialAvailableOutgoingBitrate: 4_000_000
+    // Start screen consumers near the 1080p operating point. WebRTC congestion
+    // control still reduces this immediately when the viewer's path is slower.
+    initialAvailableOutgoingBitrate: 12_000_000
   });
   if(peers.get(socketId)!==peer){transport.close();throw new Error('媒体会话已切换')}
-  await transport.setMaxIncomingBitrate(30_000_000);
+  // Original quality is allowed to target 35 Mbps; retain control/protocol
+  // headroom instead of clipping the producer below its advertised profile.
+  await transport.setMaxIncomingBitrate(50_000_000);
   peer.transports.set(transport.id, transport);
   transport.on('dtlsstatechange', (state) => { if (state === 'closed') transport.close(); });
   return { id: transport.id, iceParameters: transport.iceParameters, iceCandidates: transport.iceCandidates, dtlsParameters: transport.dtlsParameters, sctpParameters: transport.sctpParameters };
@@ -125,6 +129,12 @@ export async function createTransport(socketId: string) {
 export async function connectTransport(socketId: string, transportId: string, dtlsParameters: any) {
   const transport = peers.get(socketId)?.transports.get(transportId); if (!transport) throw new Error('媒体传输不存在');
   await transport.connect({ dtlsParameters });
+}
+
+export function closeTransport(socketId:string,transportId:string) {
+  const peer=peers.get(socketId);const transport=peer?.transports.get(transportId);
+  if(!peer||!transport)return;
+  peer.transports.delete(transportId);transport.close();
 }
 
 export async function produce(socketId: string, transportId: string, kind: any, rtpParameters: any, appData: any) {

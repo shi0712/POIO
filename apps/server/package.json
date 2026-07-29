@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json && node scripts/copy-generated.mjs",
     "start": "node dist/index.js",
     "test": "tsx --test src/**/*.test.ts",
-    "test:p2p": "npm run build && node scripts/p2p-local-smoke.mjs"
+    "test:p2p": "npm run build && node scripts/p2p-local-smoke.mjs",
+    "test:native-share": "npm run build && node scripts/native-share-local-smoke.mjs"
   },
   "dependencies": {
     "argon2": "^0.44.0",

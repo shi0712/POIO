@@ -47,6 +47,9 @@ db.exec(`
 const userColumns=db.prepare('PRAGMA table_info(users)').all() as Array<{name:string}>;
 if(!userColumns.some(column=>column.name==='avatar_url'))db.exec('ALTER TABLE users ADD COLUMN avatar_url TEXT');
 if(!userColumns.some(column=>column.name==='join_sound_url'))db.exec('ALTER TABLE users ADD COLUMN join_sound_url TEXT');
+const membershipColumns=db.prepare('PRAGMA table_info(memberships)').all() as Array<{name:string}>;
+if(!membershipColumns.some(column=>column.name==='text_muted'))db.exec('ALTER TABLE memberships ADD COLUMN text_muted INTEGER NOT NULL DEFAULT 0');
+if(!membershipColumns.some(column=>column.name==='voice_muted'))db.exec('ALTER TABLE memberships ADD COLUMN voice_muted INTEGER NOT NULL DEFAULT 0');
 
 const backupName=/^poio-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.db$/;
 let backupRunning=false;
@@ -89,6 +92,20 @@ export function scheduleDatabaseBackups() {
 
 const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 export type PublicUser = { id: string; username: string; avatarUrl?:string; joinSoundUrl?:string };
+export type SpaceMember = PublicUser&{
+  role:string;
+  textMuted:boolean;
+  voiceMuted:boolean;
+};
+
+function requireSpaceOwner(userId:string,spaceId:string) {
+  const membership=db.prepare(`SELECT s.owner_id AS ownerId,m.role FROM spaces s
+    JOIN memberships m ON m.space_id=s.id WHERE s.id=? AND m.user_id=?`)
+    .get(spaceId,userId) as {ownerId:string;role:string}|undefined;
+  if(!membership||membership.ownerId!==userId||membership.role!=='owner')
+    throw new Error('只有社区拥有者可以执行此操作');
+  return membership;
+}
 
 function normalizeAttachmentName(value:string|null|undefined) {
   if(!value)return value;
@@ -185,9 +202,8 @@ export function createSpace(user: PublicUser, name: string) {
 }
 
 export function createSpaceInvite(user: PublicUser, spaceId: string) {
-  const space = db.prepare(`SELECT s.name,m.role FROM spaces s JOIN memberships m ON m.space_id=s.id
-    WHERE s.id=? AND m.user_id=?`).get(spaceId,user.id) as {name:string;role:string}|undefined;
-  if(!space||!['owner','admin'].includes(space.role))throw new Error('只有社区拥有者或管理员可以邀请成员');
+  requireSpaceOwner(user.id,spaceId);
+  const space = db.prepare('SELECT name FROM spaces WHERE id=?').get(spaceId) as {name:string};
   const now=Date.now();
   const existing=db.prepare('SELECT code,expires_at AS expiresAt FROM space_invites WHERE space_id=? AND expires_at>? ORDER BY created_at DESC LIMIT 1').get(spaceId,now) as {code:string;expiresAt:number}|undefined;
   if(existing)return {...existing,spaceId,spaceName:space.name};
@@ -225,8 +241,16 @@ export function joinSpace(user: PublicUser, rawCode: string) {
 export function spaceMembers(userId:string,spaceId:string) {
   const allowed=db.prepare('SELECT 1 FROM memberships WHERE space_id=? AND user_id=?').get(spaceId,userId);
   if(!allowed)throw new Error('无法访问该社区');
-  return db.prepare(`SELECT u.id,u.username,u.avatar_url AS avatarUrl,u.join_sound_url AS joinSoundUrl,m.role FROM memberships m JOIN users u ON u.id=m.user_id
-    WHERE m.space_id=? ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,u.username COLLATE NOCASE`).all(spaceId);
+  const members=db.prepare(`SELECT u.id,u.username,u.avatar_url AS avatarUrl,u.join_sound_url AS joinSoundUrl,
+    m.role,m.text_muted AS textMuted,m.voice_muted AS voiceMuted
+    FROM memberships m JOIN users u ON u.id=m.user_id
+    WHERE m.space_id=? ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,u.username COLLATE NOCASE`)
+    .all(spaceId) as Array<Omit<SpaceMember,'textMuted'|'voiceMuted'>&{textMuted:number;voiceMuted:number}>;
+  return members.map(member=>({
+    ...member,
+    textMuted:member.textMuted!==0,
+    voiceMuted:member.voiceMuted!==0,
+  }));
 }
 
 export function spaceMemberIds(spaceId:string) {
@@ -234,8 +258,7 @@ export function spaceMemberIds(spaceId:string) {
 }
 
 export function createChannel(user: PublicUser, spaceId: string, name: string, kind: 'text'|'voice') {
-  const membership = db.prepare('SELECT role FROM memberships WHERE space_id=? AND user_id=?').get(spaceId, user.id) as {role:string}|undefined;
-  if (!membership || !['owner','admin'].includes(membership.role)) throw new Error('没有创建频道的权限');
+  requireSpaceOwner(user.id,spaceId);
   const id = nanoid();
   const position = (db.prepare('SELECT COALESCE(MAX(position),-1)+1 AS value FROM channels WHERE space_id=?').get(spaceId) as {value:number}).value;
   db.prepare('INSERT INTO channels(id,space_id,name,kind,position,created_at) VALUES(?,?,?,?,?,?)').run(id, spaceId, name, kind, position, Date.now());
@@ -255,16 +278,21 @@ export function channelMessages(userId: string, channelId: string) {
 }
 
 export function voiceChannelForUser(userId:string,channelId:string) {
-  const channel=db.prepare(`SELECT c.id,c.name FROM channels c JOIN memberships m ON m.space_id=c.space_id
+  const channel=db.prepare(`SELECT c.id,c.name,c.space_id AS spaceId,m.voice_muted AS voiceMuted
+    FROM channels c JOIN memberships m ON m.space_id=c.space_id
     WHERE c.id=? AND c.kind='voice' AND m.user_id=?`).get(channelId,userId) as {id:string;name:string}|undefined;
   if(!channel)throw new Error('无法访问该语音频道');
-  return channel;
+  return {
+    ...channel,
+    voiceMuted:Boolean((channel as {voiceMuted?:number}).voiceMuted),
+  };
 }
 
 export function createMessage(user: PublicUser, channelId: string, body: string, attachment?: {url:string;name:string;size:number;mime:string}) {
-  const allowed = db.prepare(`SELECT 1 FROM channels c JOIN memberships m ON m.space_id=c.space_id
-    WHERE c.id=? AND m.user_id=?`).get(channelId, user.id);
+  const allowed = db.prepare(`SELECT m.text_muted AS textMuted FROM channels c JOIN memberships m ON m.space_id=c.space_id
+    WHERE c.id=? AND m.user_id=?`).get(channelId, user.id) as {textMuted:number}|undefined;
   if (!allowed) throw new Error('无法访问该频道');
+  if(allowed.textMuted!==0)throw new Error('你已被社区拥有者禁言');
   const attachmentName=normalizeAttachmentName(attachment?.name);
   const message = { id: nanoid(), channelId, body, createdAt: Date.now(), userId: user.id, username: user.username,
     avatarUrl:user.avatarUrl,attachmentUrl:attachment?.url,attachmentName,attachmentSize:attachment?.size,attachmentMime:attachment?.mime };
@@ -275,4 +303,61 @@ export function createMessage(user: PublicUser, channelId: string, body: string,
 
 export function channelSpaceId(channelId:string) {
   return (db.prepare('SELECT space_id AS spaceId FROM channels WHERE id=?').get(channelId) as {spaceId:string}|undefined)?.spaceId;
+}
+
+export function renameSpace(user:PublicUser,spaceId:string,name:string) {
+  requireSpaceOwner(user.id,spaceId);
+  db.prepare('UPDATE spaces SET name=? WHERE id=?').run(name,spaceId);
+  return {spaceId,name};
+}
+
+export function updateMemberModeration(
+  user:PublicUser,
+  spaceId:string,
+  targetUserId:string,
+  changes:{textMuted?:boolean;voiceMuted?:boolean},
+) {
+  requireSpaceOwner(user.id,spaceId);
+  const target=db.prepare('SELECT role FROM memberships WHERE space_id=? AND user_id=?')
+    .get(spaceId,targetUserId) as {role:string}|undefined;
+  if(!target)throw new Error('该成员已不在社区中');
+  if(target.role==='owner'||targetUserId===user.id)throw new Error('不能限制社区拥有者');
+  const current=db.prepare('SELECT text_muted AS textMuted,voice_muted AS voiceMuted FROM memberships WHERE space_id=? AND user_id=?')
+    .get(spaceId,targetUserId) as {textMuted:number;voiceMuted:number};
+  const textMuted=changes.textMuted??(current.textMuted!==0);
+  const voiceMuted=changes.voiceMuted??(current.voiceMuted!==0);
+  db.prepare('UPDATE memberships SET text_muted=?,voice_muted=? WHERE space_id=? AND user_id=?')
+    .run(textMuted?1:0,voiceMuted?1:0,spaceId,targetUserId);
+  return {spaceId,userId:targetUserId,textMuted,voiceMuted};
+}
+
+export function removeSpaceMember(user:PublicUser,spaceId:string,targetUserId:string) {
+  requireSpaceOwner(user.id,spaceId);
+  const target=db.prepare('SELECT role FROM memberships WHERE space_id=? AND user_id=?')
+    .get(spaceId,targetUserId) as {role:string}|undefined;
+  if(!target)throw new Error('该成员已不在社区中');
+  if(target.role==='owner'||targetUserId===user.id)throw new Error('不能移除社区拥有者');
+  db.prepare('DELETE FROM memberships WHERE space_id=? AND user_id=?').run(spaceId,targetUserId);
+  return {spaceId,userId:targetUserId};
+}
+
+export function renameChannel(user:PublicUser,channelId:string,name:string) {
+  const channel=db.prepare('SELECT id,space_id AS spaceId,kind,position FROM channels WHERE id=?')
+    .get(channelId) as {id:string;spaceId:string;kind:'text'|'voice';position:number}|undefined;
+  if(!channel)throw new Error('频道不存在');
+  requireSpaceOwner(user.id,channel.spaceId);
+  db.prepare('UPDATE channels SET name=? WHERE id=?').run(name,channelId);
+  return {...channel,name};
+}
+
+export function deleteChannel(user:PublicUser,channelId:string) {
+  const channel=db.prepare('SELECT id,space_id AS spaceId,name,kind,position FROM channels WHERE id=?')
+    .get(channelId) as {id:string;spaceId:string;name:string;kind:'text'|'voice';position:number}|undefined;
+  if(!channel)throw new Error('频道不存在');
+  requireSpaceOwner(user.id,channel.spaceId);
+  const count=(db.prepare('SELECT COUNT(*) AS count FROM channels WHERE space_id=? AND kind=?')
+    .get(channel.spaceId,channel.kind) as {count:number}).count;
+  if(count<=1)throw new Error(`社区至少需要保留一个${channel.kind==='voice'?'语音':'文字'}频道`);
+  db.prepare('DELETE FROM channels WHERE id=?').run(channelId);
+  return channel;
 }

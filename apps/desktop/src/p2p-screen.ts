@@ -30,6 +30,7 @@ export type P2PShareStatus = {
   connecting:boolean;
   directViewers:number;
   turnViewers:number;
+  diagnostics?:ScreenDiagnostics;
   viewers:Array<{userId:string;route:P2PRoute;diagnostics?:ScreenDiagnostics}>;
 };
 export type P2PShareAnnouncement = {
@@ -520,6 +521,7 @@ export class P2PScreenTransport {
       connecting:Boolean(this.localStream)&&[...this.senderPeers.values()].some(peer=>!peer.connected),
       directViewers:connected.filter(peer=>peer.route==='p2p').length,
       turnViewers:connected.filter(peer=>peer.route==='turn').length,
+      diagnostics:connected.find(peer=>peer.diagnostics)?.diagnostics,
       viewers:connected.map(peer=>({userId:peer.userId,route:peer.route,diagnostics:peer.diagnostics}))
     });
   }

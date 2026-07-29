@@ -2,6 +2,7 @@ import { Device } from 'mediasoup-client';
 import type { Consumer, Producer, Transport } from 'mediasoup-client/types';
 import { request, socket } from './api';
 import { P2PScreenTransport, type P2PPeerAnnouncement, type P2PRemoteMedia, type P2PShareAnnouncement, type P2PShareStatus, type ScreenDiagnostics } from './p2p-screen';
+import { NativeScreenPublisher } from './native-screen-publisher';
 
 export type RemoteMedia = { id:string;userId:string;kind:'audio'|'video';tag:string;stream:MediaStream;route:'sfu'|'p2p'|'turn';diagnostics?:ScreenDiagnostics };
 export type ScreenShareStatus = P2PShareStatus;
@@ -32,10 +33,21 @@ export class ScreenSession {
   private knownProducers = new Map<string,{producerId:string;userId:string;kind:string;appData?:any}>();
   private p2pUsers = new Set<string>();
   private p2p: P2PScreenTransport;
+  private native: NativeScreenPublisher;
+  private browserShareStatus:P2PShareStatus={sharing:false,connecting:false,directViewers:0,turnViewers:0,viewers:[]};
+  private nativeShareStatus:P2PShareStatus={sharing:false,connecting:false,directViewers:0,turnViewers:0,viewers:[]};
+  private onShareStatus:(status:ScreenShareStatus)=>void;
+  private onShareError:(error:Error)=>void;
   channelId = '';
 
-  constructor(onMedia: (media: RemoteMedia[]) => void,onShareStatus:(status:ScreenShareStatus)=>void=()=>{}) {
+  constructor(
+    onMedia:(media:RemoteMedia[])=>void,
+    onShareStatus:(status:ScreenShareStatus)=>void=()=>{},
+    onShareError:(error:Error)=>void=()=>{},
+  ) {
     this.onMedia = onMedia;
+    this.onShareStatus=onShareStatus;
+    this.onShareError=onShareError;
     this.p2p=new P2PScreenTransport({
       onRemote:(items:P2PRemoteMedia[])=>{
         this.p2pMedia=new Map(items.map(item=>[item.id,item]));
@@ -49,9 +61,14 @@ export class ScreenSession {
         this.p2pUsers.delete(userId);
         void this.restoreSfuForUser(userId);
       },
-      onStatus:onShareStatus,
+      onStatus:status=>{this.browserShareStatus=status;this.publishShareStatus()},
       onSfuFallbackRequired:required=>this.setSfuFallbackRequired(required)
     });
+    this.native=new NativeScreenPublisher(
+      status=>{this.nativeShareStatus=status;this.publishShareStatus()},
+      error=>this.onShareError(error),
+    );
+    this.native.attach();
   }
 
   async join(channelId: string) {
@@ -80,6 +97,7 @@ export class ScreenSession {
     socket.on('media:newProducer', this.newProducer);
     socket.on('media:producerClosed', this.producerClosed);
     this.p2p.join(channelId,joined.p2pEnabled===true,joined.iceServers??[],joined.p2pShares??[],joined.peers??[]);
+    this.native.configure(capabilities,joined.iceServers??[],joined.peers??[]);
     for (const producer of joined.producers) await this.consume(producer);
     } catch(error) {
       if(epoch===this.epoch)this.clear();
@@ -164,10 +182,22 @@ export class ScreenSession {
     }
   }
 
-  async share(sourceId:string, profile:ShareProfile, includeAudio=false) {
+  async share(sourceId:string, profile:ShareProfile, includeAudio=false, nativeSourceId?:string) {
     if (!this.sendTransport || this.sendTransport.closed) throw new Error('屏幕共享连接未就绪，请重新尝试');
     await this.stopShare();
     const setting = profiles[profile];
+    if(nativeSourceId&&!includeAudio&&await this.native.available()) {
+      try{
+        await this.native.start(nativeSourceId,profile);
+        // The native pipeline already captures this source. Starting a second
+        // Chromium capture solely for the local preview wastes GPU resources,
+        // breaks HDR colour handling on some systems and recursively captures
+        // POIO when the user expands their own preview.
+        return undefined;
+      }catch(error){
+        console.warn('Native screen sharing unavailable, falling back to Chromium capture',error);
+      }
+    }
     const constraints:any = {
       audio:includeAudio?{mandatory:{chromeMediaSource:'desktop',chromeMediaSourceId:sourceId}}:false,
       video:{mandatory:{chromeMediaSource:'desktop',chromeMediaSourceId:sourceId,maxFrameRate:setting.fps}}
@@ -209,6 +239,10 @@ export class ScreenSession {
   }
 
   async stopShare() {
+    if(this.native.isSharing()){
+      await this.native.stop();
+      return;
+    }
     const producers=[this.screen,this.screenAudio].filter((producer):producer is Producer=>Boolean(producer));
     if(producers.length) {
       const producerIds=producers.map(producer=>producer.id);
@@ -236,6 +270,7 @@ export class ScreenSession {
   private clear() {
     this.epoch++;
     this.p2pUsers.clear();this.knownProducers.clear();this.p2pMedia.clear();this.p2p.close();
+    void this.native.leave();
     socket.off('media:newProducer',this.newProducer);
     socket.off('media:producerClosed',this.producerClosed);
     this.screen?.close(); this.screenAudio?.close(); this.sendTransport?.close(); this.recvTransport?.close();
@@ -243,5 +278,13 @@ export class ScreenSession {
     for(const item of this.media.values())item.stream.getTracks().forEach((track)=>track.stop());
     for (const consumer of this.consumers.values()) consumer.close();
     this.consumers.clear(); this.media.clear(); this.closedProducers.clear(); this.onMedia([]); this.channelId='';
+  }
+
+  private publishShareStatus() {
+    this.onShareStatus(
+      this.nativeShareStatus.sharing||this.nativeShareStatus.connecting
+        ?this.nativeShareStatus
+        :this.browserShareStatus,
+    );
   }
 }

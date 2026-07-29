@@ -1,6 +1,6 @@
 {
   "name": "@echodeck/desktop",
-  "version": "0.6.7",
+  "version": "0.7.0",
   "description": "低延迟语音、频道聊天与高清屏幕共享客户端",
   "author": "POIO",
   "private": true,
@@ -11,7 +11,8 @@
     "dev:electron": "tsc -p tsconfig.electron.json --watch --preserveWatchOutput & wait-on tcp:5173 file:dist-electron/main.js && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
     "build": "vite build && tsc -p tsconfig.electron.json",
     "test": "tsc --noEmit -p tsconfig.json",
-    "dist:win": "npm run build && electron-builder --win nsis"
+    "native:share": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../native/share-core/scripts/stage-desktop.ps1",
+    "dist:win": "npm run native:share && npm run build && electron-builder --win nsis"
   },
   "dependencies": {
     "electron-updater": "^6.6.2",
@@ -50,6 +51,10 @@
       {
         "from": "resources/mumble",
         "to": "mumble"
+      },
+      {
+        "from": "resources/share",
+        "to": "share"
       }
     ],
     "asar": true,

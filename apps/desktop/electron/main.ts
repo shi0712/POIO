@@ -6,6 +6,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { NativeShareSidecar } from './native-share.js';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const { autoUpdater } = electronUpdater;
@@ -25,6 +26,11 @@ let mumbleDeafened = false;
 let mumbleTransmitting = false;
 let mumblePushToTalkActive = false;
 let pendingInviteCode: string | undefined;
+const repositoryRoot = path.resolve(dirname, '../../..');
+const nativeShare = new NativeShareSidecar(
+  repositoryRoot,
+  message => sendToMainWindow('native-share:message', message),
+);
 const mumblePipeSuffix = process.pid.toString(36);
 const mumblePipe = `${String.raw`\\.\pipe\EchoDeckMumble`}-${mumblePipeSuffix}`;
 
@@ -650,7 +656,25 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('desktop:sources', async () => {
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 360, height: 200 }, fetchWindowIcons: true });
-    return sources.map((source) => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL(), appIcon: source.appIcon?.toDataURL() }));
+    type NativeSource={id:string;kind:'monitor'|'window';name:string;application:string};
+    let nativeSources:NativeSource[]=[];
+    if(nativeShare.available){
+      try{nativeSources=await nativeShare.command<NativeSource[]>('sources',{})}catch{}
+    }
+    const monitors=nativeSources.filter(source=>source.kind==='monitor');
+    const windows=nativeSources.filter(source=>source.kind==='window');
+    let monitorIndex=0;
+    const claimedWindows=new Set<string>();
+    return sources.map((source) => {
+      let nativeId:string|undefined;
+      if(source.id.startsWith('screen:'))nativeId=monitors[monitorIndex++]?.id;
+      else{
+        const exact=windows.find(item=>!claimedWindows.has(item.id)&&item.name===source.name);
+        const byApplication=exact??windows.find(item=>!claimedWindows.has(item.id)&&source.name.toLowerCase().includes(item.application.replace(/\.exe$/i,'').toLowerCase()));
+        const match=exact??byApplication;if(match){nativeId=match.id;claimedWindows.add(match.id)}
+      }
+      return { id: source.id, nativeId, name: source.name, thumbnail: source.thumbnail.toDataURL(), appIcon: source.appIcon?.toDataURL() };
+    });
   });
   ipcMain.handle('desktop:capture', async () => {
     const window=mainWindow;
@@ -671,6 +695,14 @@ app.whenReady().then(async () => {
       if(wasVisible&&!window.isDestroyed()){window.show();window.focus()}
     }
   });
+  ipcMain.handle('native-share:available', () => nativeShare.available);
+  ipcMain.handle('native-share:command', (_event,method:string,params:Record<string,unknown>) => {
+    const allowed=new Set(['hello','probe','sources','start','stop','stats','sfu.setPaused','p2p.addViewer','p2p.answer','p2p.candidate','p2p.removeViewer']);
+    if(!allowed.has(method))throw new Error('不允许的原生屏幕共享命令');
+    return nativeShare.command(method,params??{});
+  });
+  ipcMain.handle('native-share:resolve', (_event,requestId:string,ok:boolean,result?:unknown,error?:string) =>
+    nativeShare.resolveRequest(requestId,ok,result,error));
   ipcMain.handle('mumble:connect', (_event, connection:MumbleConnection) => connectMumble(connection));
   ipcMain.handle('mumble:state', () => mumbleRuntimeState);
   ipcMain.handle('mumble:command', async (_event, command:string) => {
@@ -699,6 +731,6 @@ app.whenReady().then(async () => {
   controlPoller.unref();
 });
 
-app.on('before-quit',()=>{appQuitting=true;stopMumble()});
+app.on('before-quit',()=>{appQuitting=true;stopMumble();void nativeShare.stop()});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate',showMainWindow);

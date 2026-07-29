@@ -40,6 +40,34 @@ test('custom join sounds are stored with the user and size-limited',async()=>{
   assert.equal(database.updateJoinSound(auth.user.id,null).joinSoundUrl,null);
 });
 
+test('only the community owner can moderate members and manage channels',async()=>{
+  const owner=await database.register(`moderator_${Date.now()}`,'Owner-moderation-test');
+  const guest=await database.register(`member_${Date.now()}`,'Guest-moderation-test');
+  const space=owner.bootstrap[0];
+  const initialTextChannelId=(space.channels[0] as {id:string}).id;
+  const invite=database.createSpaceInvite(owner.user,space.id);
+  database.joinSpace(guest.user,invite.code);
+
+  const muted=database.updateMemberModeration(owner.user,space.id,guest.user.id,{textMuted:true,voiceMuted:true});
+  assert.deepEqual(muted,{spaceId:space.id,userId:guest.user.id,textMuted:true,voiceMuted:true});
+  assert.equal(database.spaceMembers(owner.user.id,space.id).find(member=>member.id===guest.user.id)?.voiceMuted,true);
+  assert.throws(()=>database.createMessage(guest.user,initialTextChannelId,'blocked'),/禁言/);
+  assert.throws(()=>database.updateMemberModeration(guest.user,space.id,owner.user.id,{textMuted:true}),/拥有者/);
+
+  database.updateMemberModeration(owner.user,space.id,guest.user.id,{textMuted:false,voiceMuted:false});
+  assert.equal(database.createMessage(guest.user,initialTextChannelId,'allowed').body,'allowed');
+
+  const extraText=database.createChannel(owner.user,space.id,'攻略','text');
+  const renamed=database.renameChannel(owner.user,extraText.id,'战术');
+  assert.equal(renamed.name,'战术');
+  assert.throws(()=>database.renameChannel(guest.user,extraText.id,'越权'),/拥有者/);
+  assert.equal(database.deleteChannel(owner.user,extraText.id).id,extraText.id);
+  assert.throws(()=>database.deleteChannel(owner.user,initialTextChannelId),/至少需要保留一个文字频道/);
+
+  assert.deepEqual(database.removeSpaceMember(owner.user,space.id,guest.user.id),{spaceId:space.id,userId:guest.user.id});
+  assert.throws(()=>database.spaceMembers(guest.user.id,space.id),/无法访问/);
+});
+
 test.after(()=>{
   database.db.close();
   for(const suffix of ['','-shm','-wal'])rmSync(`${databasePath}${suffix}`,{force:true});
