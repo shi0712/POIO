@@ -25,6 +25,7 @@ export default function App(){
   const [screenshot,setScreenshot]=useState<ScreenshotCapture>(); const [pendingScreenshot,setPendingScreenshot]=useState<QueuedScreenshot>(); const [composerExpanded,setComposerExpanded]=useState(false); const [composerPreview,setComposerPreview]=useState(false); const [avatarUploading,setAvatarUploading]=useState(false);
   const [voiceChannel,setVoiceChannel]=useState(''); const [joiningVoiceChannel,setJoiningVoiceChannel]=useState(''); const [muted,setMuted]=useState(false); const [voiceServerMuted,setVoiceServerMuted]=useState(false); const [deafened,setDeafened]=useState(false); const [transmitting,setTransmitting]=useState(false); const [pushToTalkActive,setPushToTalkActive]=useState(false); const [micLevel,setMicLevel]=useState(0); const [inputVolume,setInputVolume]=useState(100); const [outputVolume,setOutputVolume]=useState(100); const volumeTimer=useRef(0); const [memberVolumes,setMemberVolumes]=useState<Record<string,number>>({}); const [talkingMembers,setTalkingMembers]=useState<Record<string,boolean>>({}); const memberVolumeTimers=useRef<Record<string,number>>({}); const [voiceMembers,setVoiceMembers]=useState<Record<string,User[]>>({}); const [remoteMedia,setRemoteMedia]=useState<RemoteMedia[]>([]);
   const voiceJoinEpoch=useRef(0);
+  const voiceSwitchQueue=useRef<Promise<void>>(Promise.resolve());
   const previousAudioControls=useRef({muted:false,deafened:false});
   const [shareOpen,setShareOpen]=useState(false); const [sources,setSources]=useState<Array<any>>([]); const [shareProfile,setShareProfile]=useState<ShareProfile>('hd'); const [shareAudio,setShareAudio]=useState(false); const [localShare,setLocalShare]=useState<MediaStream>();
   const [screenShareStatus,setScreenShareStatus]=useState<ScreenShareStatus>({sharing:false,connecting:false,directViewers:0,turnViewers:0,viewers:[]});
@@ -133,7 +134,7 @@ export default function App(){
   if(loading)return <div className="boot"><div className="brand-mark">POIO</div><span>正在连接 POIO...</span></div>;
   if(!user)return <><Auth onAuth={applyAuth} onError={showError} invite={incomingInvite} inviteLoading={incomingInviteLoading}/>{error&&<div className="toast">{error}</div>}</>;
 
-  const selectChannel=async(channel:Channel)=>{
+  const selectChannel=(channel:Channel)=>{
     setChannelId(channel.id);
     setUnreadChannels(current=>({...current,[channel.id]:0}));
     if(channel.kind!=='voice')return;
@@ -141,28 +142,53 @@ export default function App(){
     if(channel.id===joiningVoiceChannel||sameActiveVoice)return;
     const epoch=++voiceJoinEpoch.current;
     setJoiningVoiceChannel(channel.id);
-    try{
-      const connection=await request<{host:string;port:number;username:string;password:string;channelName:string;voiceMuted:boolean}>('voice:credentials',{channelId:channel.id});
+    const switchVoice=async()=>{
       if(epoch!==voiceJoinEpoch.current)return;
-      await electronBridge().mumble.connect(connection);
-      if(epoch!==voiceJoinEpoch.current)return;
-      const presence=await request<{channelId:string;users:User[];moderation:{voiceMuted:boolean}}>('voice:join',{channelId:channel.id});
-      if(epoch!==voiceJoinEpoch.current)return;
-      setVoiceMembers(all=>({...all,[channel.id]:presence.users}));
-      setVoiceChannel(channel.id);
-      setVoiceServerMuted(presence.moderation.voiceMuted);
-      setJoiningVoiceChannel('');
-      setMuted(presence.moderation.voiceMuted);
-      setDeafened(false);
-      if(voiceJoinCuesEnabled)void playVoiceJoinCue(user.joinSoundUrl?`${serverUrl}${user.joinSoundUrl}`:undefined);
-      try{await screen.join(channel.id)}catch(e){if(epoch===voiceJoinEpoch.current)showError(e)}
-    }catch(e){
-      if(epoch!==voiceJoinEpoch.current)return;
-      setJoiningVoiceChannel('');
-      screen.close();
-      void electronBridge().mumble.disconnect();
-      showError(e);
-    }
+      try{
+        if(voiceChannel&&voiceChannel!==channel.id){
+          screen.close();
+          setLocalShare(current=>{
+            current?.getTracks().forEach(track=>track.stop());
+            return undefined;
+          });
+          await request('voice:leave').catch(()=>{});
+          if(epoch!==voiceJoinEpoch.current)return;
+          setVoiceChannel('');
+          setVoiceServerMuted(false);
+          setTransmitting(false);
+          setPushToTalkActive(false);
+          setMicLevel(0);
+        }
+        const connection=await request<{host:string;port:number;username:string;password:string;channelName:string;voiceMuted:boolean}>('voice:credentials',{channelId:channel.id});
+        if(epoch!==voiceJoinEpoch.current)return;
+        await electronBridge().mumble.connect(connection);
+        if(epoch!==voiceJoinEpoch.current)return;
+        const presence=await request<{channelId:string;users:User[];moderation:{voiceMuted:boolean}}>('voice:join',{channelId:channel.id});
+        if(epoch!==voiceJoinEpoch.current)return;
+        setVoiceMembers(all=>({...all,[channel.id]:presence.users}));
+        setVoiceChannel(channel.id);
+        setVoiceServerMuted(presence.moderation.voiceMuted);
+        setJoiningVoiceChannel('');
+        setMuted(presence.moderation.voiceMuted);
+        setDeafened(false);
+        if(voiceJoinCuesEnabled)void playVoiceJoinCue(user.joinSoundUrl?`${serverUrl}${user.joinSoundUrl}`:undefined);
+        try{await screen.join(channel.id)}catch(e){if(epoch===voiceJoinEpoch.current)showError(e)}
+      }catch(e){
+        if(epoch!==voiceJoinEpoch.current)return;
+        setJoiningVoiceChannel('');
+        screen.close();
+        await electronBridge().mumble.disconnect().catch(()=>{});
+        setVoiceChannel('');
+        setVoiceServerMuted(false);
+        setMuted(false);
+        setDeafened(false);
+        setTransmitting(false);
+        setPushToTalkActive(false);
+        setMicLevel(0);
+        showError(e);
+      }
+    };
+    voiceSwitchQueue.current=voiceSwitchQueue.current.catch(()=>{}).then(switchVoice);
   };
   const send=async()=>{const text=body.trim();const queued=pendingScreenshot;if(textMuted){showError(new Error('你已被社区拥有者禁言'));return}if((!text&&!queued)||!currentChannel||uploading)return;const targetChannel=currentChannel;stickToLatestRef.current=true;setMessageAtBottom(true);if(queued)setUploading(true);try{const token=localStorage.getItem(TOKEN_KEY)??'';const attachment=queued?await uploadFile(queued.file,token):undefined;await request('chat:send',{channelId:targetChannel.id,body:text,attachment});setBody('');setPendingScreenshot(undefined);setComposerPreview(false)}catch(e){showError(e)}finally{if(queued)setUploading(false)}};
   const attach=async(file?:File)=>{if(textMuted){showError(new Error('你已被社区拥有者禁言'));return}if(!file||!currentChannel||uploading)return;if(file.size>50*1024*1024){showError(new Error('文件不能超过 50 MB'));return}const targetChannel=currentChannel;setUploading(true);try{const token=localStorage.getItem(TOKEN_KEY)??'';const attachment=await uploadFile(file,token);await request('chat:send',{channelId:targetChannel.id,body:'',attachment})}catch(e){showError(e)}finally{setUploading(false);if(fileRef.current)fileRef.current.value=''}};

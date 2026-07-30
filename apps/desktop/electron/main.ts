@@ -240,10 +240,30 @@ async function connectMumble(connection:MumbleConnection,recovering=false) {
   }
   if(mumbleProcess&&mumbleProcess.exitCode===null&&mumbleIdentity===identity){
     const child=mumbleProcess;
-    await waitForMumbleBridge(child);
-    const deadline=Date.now()+6_000;let result='';
-    do {result=await mumbleCommand(`MOVE ${connection.channelName}`);if(result.startsWith('OK')){const status=await activateMumbleAudio();mumbleRestartAttempts=0;publishMumbleState({state:'connected'});return status}await new Promise(resolve=>setTimeout(resolve,300));} while(result.includes('channel-not-found')&&Date.now()<deadline);
-    throw new Error(`切换 Mumble 频道失败：${result}`);
+    let moveResult='';
+    try{
+      await waitForMumbleBridge(child);
+      const deadline=Date.now()+6_000;
+      do {
+        moveResult=await mumbleCommand(`MOVE ${connection.channelName}`);
+        if(moveResult.startsWith('OK')){
+          const status=await activateMumbleAudio();
+          mumbleRestartAttempts=0;
+          publishMumbleState({state:'connected'});
+          return status;
+        }
+        await new Promise(resolve=>setTimeout(resolve,300));
+      } while(moveResult.includes('channel-not-found')&&Date.now()<deadline);
+    }catch(error){
+      moveResult=error instanceof Error?error.message:String(error);
+    }
+    // Moving inside the existing Mumble process is the fast path. If the
+    // channel has not propagated yet or the bridge is restarting, replace the
+    // process and connect directly to the requested channel instead of making
+    // the user hang up and click the channel again.
+    mumbleLastFailure=`Mumble 原地切换失败，正在重新连接：${moveResult||'未知错误'}`;
+    stopMumble(false);
+    publishMumbleState({state:'connecting',message:'正在切换语音频道'});
   }
   stopMumble(false);
   const directory=sidecarDirectory(); const executable=path.join(directory,'mumble.exe');
