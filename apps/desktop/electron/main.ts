@@ -243,7 +243,11 @@ async function connectMumble(connection:MumbleConnection,recovering=false) {
     let moveResult='';
     try{
       await waitForMumbleBridge(child);
-      const deadline=Date.now()+6_000;
+      // The API creates the target channel before returning credentials, so
+      // channel propagation should only take a few bridge ticks. Keep this
+      // retry window short: a dead bridge should fall back to reconnecting
+      // promptly instead of making every channel switch feel stalled.
+      const deadline=Date.now()+3_500;
       do {
         moveResult=await mumbleCommand(`MOVE ${connection.channelName}`);
         if(moveResult.startsWith('OK')){
@@ -252,7 +256,7 @@ async function connectMumble(connection:MumbleConnection,recovering=false) {
           publishMumbleState({state:'connected'});
           return status;
         }
-        await new Promise(resolve=>setTimeout(resolve,300));
+        await new Promise(resolve=>setTimeout(resolve,150));
       } while(moveResult.includes('channel-not-found')&&Date.now()<deadline);
     }catch(error){
       moveResult=error instanceof Error?error.message:String(error);

@@ -44,7 +44,7 @@ app.post('/api/uploads',upload.single('file'),(req,res)=>{
   if(!req.file){res.status(400).json({error:'没有收到文件'});return;}
   res.json({url:`/uploads/${req.file.filename}`,name:req.file.originalname,size:req.file.size,mime:req.file.mimetype||'application/octet-stream'});
 });
-app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '0.5.0' }));
+app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '0.5.1' }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: config.corsOrigin }, maxHttpBufferSize: 2_000_000, transports: ['websocket','polling'] });
 
@@ -145,7 +145,7 @@ const forceUserOutOfSpace = async(spaceId:string,userId:string,reason:string) =>
 io.on('connection', (socket) => {
   socket.on('app:capabilities', (_raw, ack: Ack) => { ok(ack,{
     protocolVersion:1,
-    serverVersion:'0.5.0',
+    serverVersion:'0.5.1',
     features:{chat:true,attachments:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,voiceLeaveCues:true,customJoinSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true},
     media:{codecs:['video/H264','video/VP8','audio/opus'],webRtcPort:config.mediaPort},
     android:{minimumVersion:1,recommendedVersion:1}
@@ -221,7 +221,19 @@ io.on('connection', (socket) => {
   socket.on('chat:history', (raw, ack: Ack) => { try { ok(ack,channelMessages(auth(socket).id,z.object({channelId:z.string()}).parse(raw).channelId)); } catch(e){fail(ack,e);} });
   socket.on('chat:send', (raw, ack: Ack) => { try { const v=z.object({channelId:z.string(),body:z.string().trim().max(4000).default(''),attachment:z.object({url:z.string().startsWith('/uploads/'),name:z.string().min(1).max(255),size:z.number().int().max(50*1024*1024),mime:z.string().max(128)}).optional()}).refine(v=>v.body.length>0||v.attachment,'消息不能为空').parse(raw); const user=auth(socket); const msg=createMessage(user,v.channelId,v.body,v.attachment); io.to(`channel:${v.channelId}`).emit('chat:message',msg); const spaceId=channelSpaceId(v.channelId); if(spaceId)io.to(`space:${spaceId}`).emit('chat:activity',{channelId:v.channelId,messageId:msg.id,userId:user.id}); ok(ack,msg); } catch(e){fail(ack,e);} });
   socket.on('channel:watch', (raw, ack: Ack) => { try { const channelId=z.object({channelId:z.string()}).parse(raw).channelId; const user=auth(socket); const spaceId=channelSpaceId(channelId);if(!spaceId)throw new Error('频道不存在');spaceMembers(user.id,spaceId);for (const room of socket.rooms) if(room.startsWith('channel:')) socket.leave(room); socket.join(`channel:${channelId}`); ok(ack,true); } catch(e){fail(ack,e);} });
-  socket.on('voice:credentials', async (raw, ack: Ack) => { try { const user=auth(socket); const channel=voiceChannelForUser(user.id,z.object({channelId:z.string()}).parse(raw).channelId); const username=`ed_${user.id}`; await ensureVoiceChannel(channel.id); await claimMumbleUsername(username); ok(ack,{host:config.mumbleHost,port:config.mumblePort,username,password:config.mumblePassword,channelName:mumbleChannelName(channel.id),voiceMuted:channel.voiceMuted}); } catch(e){fail(ack,e);} });
+  socket.on('voice:credentials', async (raw, ack: Ack) => { try {
+    const user=auth(socket);
+    const channel=voiceChannelForUser(user.id,z.object({channelId:z.string()}).parse(raw).channelId);
+    const username=`ed_${user.id}`;
+    const existingPresence=voicePresence.get(socket.id);
+    await ensureVoiceChannel(channel.id);
+    // A client already present in voice is switching channels. Its native
+    // Mumble process must stay alive so Electron can MOVE it in place. Only
+    // claim the username for a new/recovered session, where an old process may
+    // genuinely be stale and needs replacing.
+    if(!existingPresence||existingPresence.user.id!==user.id)await claimMumbleUsername(username);
+    ok(ack,{host:config.mumbleHost,port:config.mumblePort,username,password:config.mumblePassword,channelName:mumbleChannelName(channel.id),voiceMuted:channel.voiceMuted});
+  } catch(e){fail(ack,e);} });
   socket.on('voice:join', async (raw, ack: Ack) => { try {
     const user=auth(socket);const channel=voiceChannelForUser(user.id,z.object({channelId:z.string()}).parse(raw).channelId);
     if(channel.voiceMuted)await setMumbleUserMuted(user.id,true);

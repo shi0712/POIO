@@ -151,10 +151,6 @@ export default function App(){
             current?.getTracks().forEach(track=>track.stop());
             return undefined;
           });
-          await request('voice:leave').catch(()=>{});
-          if(epoch!==voiceJoinEpoch.current)return;
-          setVoiceChannel('');
-          setVoiceServerMuted(false);
           setTransmitting(false);
           setPushToTalkActive(false);
           setMicLevel(0);

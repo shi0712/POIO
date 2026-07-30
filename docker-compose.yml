@@ -22,7 +22,7 @@ services:
       - ./mumble-certs:/certs:ro
   server:
     build: .
-    image: poio/server:0.5.0
+    image: poio/server:0.5.1
     container_name: poio-server
     restart: unless-stopped
     network_mode: host
