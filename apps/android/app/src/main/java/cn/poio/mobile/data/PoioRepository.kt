@@ -38,6 +38,8 @@ data class PoioState(
     val selectedSpaceId: String? = null,
     val selectedChannelId: String? = null,
     val messages: List<ChatMessage> = emptyList(),
+    val messageSearchResults: List<ChatMessage> = emptyList(),
+    val messageSearchBusy: Boolean = false,
     val capabilities: ServerCapabilities? = null,
     val voiceChannelId: String? = null,
     val voiceMembers: Map<String, List<User>> = emptyMap(),
@@ -68,6 +70,17 @@ class PoioRepository(
             mutableState.value = mutableState.value.let { current ->
                 if (message.channelId != current.selectedChannelId || current.messages.any { it.id == message.id }) current
                 else current.copy(messages = current.messages + message)
+            }
+        }
+        client.on("chat:messageUpdated") { args ->
+            val value = args.firstOrNull() as? JSONObject ?: return@on
+            val message = runCatching { PoioJson.message(value) }.getOrNull() ?: return@on
+            mutableState.value = mutableState.value.let { current ->
+                if (message.channelId != current.selectedChannelId) current
+                else current.copy(
+                    messages = current.messages.map { if (it.id == message.id) message else it },
+                    messageSearchResults = current.messageSearchResults.map { if (it.id == message.id) message else it },
+                )
             }
         }
         client.on("channel:created") { args ->
@@ -129,24 +142,36 @@ class PoioRepository(
 
     suspend fun selectSpace(spaceId: String) {
         val space = mutableState.value.spaces.firstOrNull { it.id == spaceId } ?: return
-        mutableState.value = mutableState.value.copy(selectedSpaceId = space.id, selectedChannelId = space.channels.firstOrNull()?.id, messages = emptyList())
+        mutableState.value = mutableState.value.copy(
+            selectedSpaceId = space.id,
+            selectedChannelId = space.channels.firstOrNull()?.id,
+            messages = emptyList(),
+            messageSearchResults = emptyList(),
+        )
         mutableState.value.selectedChannel?.let { selectChannel(it.id) }
     }
 
     suspend fun selectChannel(channelId: String) = guarded(showBusy = false) {
-        mutableState.value = mutableState.value.copy(selectedChannelId = channelId, messages = emptyList())
+        mutableState.value = mutableState.value.copy(
+            selectedChannelId = channelId,
+            messages = emptyList(),
+            messageSearchResults = emptyList(),
+        )
         client.request("channel:watch", JSONObject().put("channelId", channelId))
         val history = client.request("chat:history", JSONObject().put("channelId", channelId)) as JSONArray
         mutableState.value = mutableState.value.copy(messages = history.objects().map(PoioJson::message))
     }
 
-    suspend fun sendMessage(body: String) = guarded(showBusy = false) {
+    suspend fun sendMessage(body: String, replyToId: String? = null) = guarded(showBusy = false) {
         val channelId = mutableState.value.selectedChannelId ?: return@guarded
         if (body.isBlank()) return@guarded
-        client.request("chat:send", JSONObject().put("channelId", channelId).put("body", body.trim()))
+        client.request(
+            "chat:send",
+            JSONObject().put("channelId", channelId).put("body", body.trim()).putOptional("replyToId", replyToId),
+        )
     }
 
-    suspend fun sendAttachment(uri: Uri, body: String) = guarded {
+    suspend fun sendAttachment(uri: Uri, body: String, replyToId: String? = null) = guarded {
         val channelId = mutableState.value.selectedChannelId ?: return@guarded
         val attachment = uploader.upload(uri)
         client.request(
@@ -154,6 +179,7 @@ class PoioRepository(
             JSONObject()
                 .put("channelId", channelId)
                 .put("body", body.trim())
+                .putOptional("replyToId", replyToId)
                 .put(
                     "attachment",
                     JSONObject()
@@ -163,6 +189,45 @@ class PoioRepository(
                         .put("mime", attachment.mime),
                 ),
         )
+    }
+
+    suspend fun editMessage(messageId: String, body: String) = guarded(showBusy = false) {
+        client.request("chat:edit", JSONObject().put("messageId", messageId).put("body", body.trim()))
+    }
+
+    suspend fun deleteMessage(messageId: String) = guarded(showBusy = false) {
+        client.request("chat:delete", JSONObject().put("messageId", messageId))
+    }
+
+    suspend fun reactMessage(messageId: String, emoji: String) = guarded(showBusy = false) {
+        client.request("chat:react", JSONObject().put("messageId", messageId).put("emoji", emoji))
+    }
+
+    suspend fun searchMessages(query: String) {
+        val channelId = mutableState.value.selectedChannelId ?: return
+        if (query.isBlank()) {
+            clearMessageSearch()
+            return
+        }
+        mutableState.value = mutableState.value.copy(messageSearchBusy = true, error = null)
+        runCatching {
+            val value = client.request(
+                "chat:search",
+                JSONObject().put("channelId", channelId).put("query", query.trim()),
+            ) as JSONArray
+            value.objects().map(PoioJson::message)
+        }.onSuccess { results ->
+            if (mutableState.value.selectedChannelId == channelId) {
+                mutableState.value = mutableState.value.copy(messageSearchResults = results)
+            }
+        }.onFailure { error ->
+            mutableState.value = mutableState.value.copy(error = error.message ?: "搜索消息失败")
+        }
+        mutableState.value = mutableState.value.copy(messageSearchBusy = false)
+    }
+
+    fun clearMessageSearch() {
+        mutableState.value = mutableState.value.copy(messageSearchResults = emptyList(), messageSearchBusy = false)
     }
 
     suspend fun updateAvatar(uri: Uri) = guarded {
@@ -333,4 +398,9 @@ class PoioRepository(
         }
         if (showBusy) mutableState.value = mutableState.value.copy(busy = false)
     }
+}
+
+private fun JSONObject.putOptional(name: String, value: String?): JSONObject {
+    if (value != null) put(name, value)
+    return this
 }

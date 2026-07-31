@@ -50,6 +50,19 @@ if(!userColumns.some(column=>column.name==='join_sound_url'))db.exec('ALTER TABL
 const membershipColumns=db.prepare('PRAGMA table_info(memberships)').all() as Array<{name:string}>;
 if(!membershipColumns.some(column=>column.name==='text_muted'))db.exec('ALTER TABLE memberships ADD COLUMN text_muted INTEGER NOT NULL DEFAULT 0');
 if(!membershipColumns.some(column=>column.name==='voice_muted'))db.exec('ALTER TABLE memberships ADD COLUMN voice_muted INTEGER NOT NULL DEFAULT 0');
+const messageColumns=db.prepare('PRAGMA table_info(messages)').all() as Array<{name:string}>;
+if(!messageColumns.some(column=>column.name==='reply_to_id'))db.exec('ALTER TABLE messages ADD COLUMN reply_to_id TEXT REFERENCES messages(id) ON DELETE SET NULL');
+if(!messageColumns.some(column=>column.name==='edited_at'))db.exec('ALTER TABLE messages ADD COLUMN edited_at INTEGER');
+if(!messageColumns.some(column=>column.name==='deleted_at'))db.exec('ALTER TABLE messages ADD COLUMN deleted_at INTEGER');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS message_reactions (
+    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji TEXT NOT NULL, created_at INTEGER NOT NULL,
+    PRIMARY KEY(message_id,user_id,emoji)
+  );
+  CREATE INDEX IF NOT EXISTS idx_message_reactions_message ON message_reactions(message_id,created_at);
+`);
 
 const backupName=/^poio-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.db$/;
 let backupRunning=false;
@@ -265,16 +278,76 @@ export function createChannel(user: PublicUser, spaceId: string, name: string, k
   return { id, spaceId, name, kind, position };
 }
 
-export function channelMessages(userId: string, channelId: string) {
+const messageSelect=`SELECT m.id,m.channel_id AS channelId,m.body,m.created_at AS createdAt,
+  m.edited_at AS editedAt,m.deleted_at AS deletedAt,
+  m.attachment_url AS attachmentUrl,m.attachment_name AS attachmentName,
+  m.attachment_size AS attachmentSize,m.attachment_mime AS attachmentMime,
+  u.id AS userId,u.username,u.avatar_url AS avatarUrl,
+  rm.id AS replyId,rm.body AS replyBody,rm.deleted_at AS replyDeletedAt,
+  rm.attachment_name AS replyAttachmentName,
+  ru.id AS replyUserId,ru.username AS replyUsername
+  FROM messages m JOIN users u ON u.id=m.user_id
+  LEFT JOIN messages rm ON rm.id=m.reply_to_id
+  LEFT JOIN users ru ON ru.id=rm.user_id`;
+
+function hydrateMessages(rows:any[]) {
+  if(!rows.length)return [];
+  const placeholders=rows.map(()=>'?').join(',');
+  const reactions=db.prepare(`SELECT message_id AS messageId,user_id AS userId,emoji
+    FROM message_reactions WHERE message_id IN (${placeholders}) ORDER BY created_at`)
+    .all(...rows.map(row=>row.id)) as Array<{messageId:string;userId:string;emoji:string}>;
+  const grouped=new Map<string,Map<string,string[]>>();
+  for(const reaction of reactions){
+    let byEmoji=grouped.get(reaction.messageId);
+    if(!byEmoji){byEmoji=new Map();grouped.set(reaction.messageId,byEmoji)}
+    const userIds=byEmoji.get(reaction.emoji)??[];
+    userIds.push(reaction.userId);
+    byEmoji.set(reaction.emoji,userIds);
+  }
+  return rows.map(row=>{
+    const reply=row.replyId?{
+      id:row.replyId,
+      userId:row.replyUserId,
+      username:row.replyUsername,
+      body:row.replyDeletedAt?'' : row.replyBody,
+      attachmentName:row.replyDeletedAt?undefined:normalizeAttachmentName(row.replyAttachmentName),
+      deleted:Boolean(row.replyDeletedAt),
+    }:undefined;
+    const byEmoji=grouped.get(row.id);
+    return {
+      id:row.id,channelId:row.channelId,body:row.deletedAt?'':row.body,createdAt:row.createdAt,
+      editedAt:row.deletedAt?undefined:row.editedAt??undefined,deleted:Boolean(row.deletedAt),
+      userId:row.userId,username:row.username,avatarUrl:row.avatarUrl??undefined,
+      attachmentUrl:row.deletedAt?undefined:row.attachmentUrl??undefined,
+      attachmentName:row.deletedAt?undefined:normalizeAttachmentName(row.attachmentName)??undefined,
+      attachmentSize:row.deletedAt?undefined:row.attachmentSize??undefined,
+      attachmentMime:row.deletedAt?undefined:row.attachmentMime??undefined,
+      reply,
+      reactions:byEmoji?[...byEmoji.entries()].map(([emoji,userIds])=>({emoji,count:userIds.length,userIds})):[],
+    };
+  });
+}
+
+function requireChannelAccess(userId:string,channelId:string) {
   const allowed = db.prepare(`SELECT 1 FROM channels c JOIN memberships m ON m.space_id=c.space_id
     WHERE c.id=? AND m.user_id=?`).get(channelId, userId);
   if (!allowed) throw new Error('无法访问该频道');
-  const rows=db.prepare(`SELECT m.id,m.channel_id AS channelId,m.body,m.created_at AS createdAt,
-    m.attachment_url AS attachmentUrl,m.attachment_name AS attachmentName,
-    m.attachment_size AS attachmentSize,m.attachment_mime AS attachmentMime,
-    u.id AS userId,u.username,u.avatar_url AS avatarUrl FROM messages m JOIN users u ON u.id=m.user_id
+}
+
+function hydratedMessage(userId:string,messageId:string) {
+  const row=db.prepare(`${messageSelect}
+    JOIN channels access_channel ON access_channel.id=m.channel_id
+    JOIN memberships access_membership ON access_membership.space_id=access_channel.space_id
+    WHERE m.id=? AND access_membership.user_id=?`).get(messageId,userId);
+  if(!row)throw new Error('消息不存在或无法访问');
+  return hydrateMessages([row])[0];
+}
+
+export function channelMessages(userId: string, channelId: string) {
+  requireChannelAccess(userId,channelId);
+  const rows=db.prepare(`${messageSelect}
     WHERE m.channel_id=? ORDER BY m.created_at DESC LIMIT 200`).all(channelId).reverse();
-  return rows.map((row:any)=>({...row,attachmentName:normalizeAttachmentName(row.attachmentName)}));
+  return hydrateMessages(rows);
 }
 
 export function voiceChannelForUser(userId:string,channelId:string) {
@@ -288,17 +361,97 @@ export function voiceChannelForUser(userId:string,channelId:string) {
   };
 }
 
-export function createMessage(user: PublicUser, channelId: string, body: string, attachment?: {url:string;name:string;size:number;mime:string}) {
+export function createMessage(user: PublicUser, channelId: string, body: string, attachment?: {url:string;name:string;size:number;mime:string},replyToId?:string) {
   const allowed = db.prepare(`SELECT m.text_muted AS textMuted FROM channels c JOIN memberships m ON m.space_id=c.space_id
     WHERE c.id=? AND m.user_id=?`).get(channelId, user.id) as {textMuted:number}|undefined;
   if (!allowed) throw new Error('无法访问该频道');
   if(allowed.textMuted!==0)throw new Error('你已被社区拥有者禁言');
+  if(replyToId){
+    const reply=db.prepare('SELECT channel_id AS channelId FROM messages WHERE id=?').get(replyToId) as {channelId:string}|undefined;
+    if(!reply||reply.channelId!==channelId)throw new Error('回复的消息不存在或不在当前频道');
+  }
   const attachmentName=normalizeAttachmentName(attachment?.name);
   const message = { id: nanoid(), channelId, body, createdAt: Date.now(), userId: user.id, username: user.username,
     avatarUrl:user.avatarUrl,attachmentUrl:attachment?.url,attachmentName,attachmentSize:attachment?.size,attachmentMime:attachment?.mime };
-  db.prepare(`INSERT INTO messages(id,channel_id,user_id,body,created_at,attachment_url,attachment_name,attachment_size,attachment_mime)
-    VALUES(?,?,?,?,?,?,?,?,?)`).run(message.id, channelId, user.id, body, message.createdAt, attachment?.url??null, attachmentName??null, attachment?.size??null, attachment?.mime??null);
-  return message;
+  db.prepare(`INSERT INTO messages(id,channel_id,user_id,body,created_at,attachment_url,attachment_name,attachment_size,attachment_mime,reply_to_id)
+    VALUES(?,?,?,?,?,?,?,?,?,?)`).run(message.id, channelId, user.id, body, message.createdAt, attachment?.url??null, attachmentName??null, attachment?.size??null, attachment?.mime??null, replyToId??null);
+  return hydratedMessage(user.id,message.id);
+}
+
+export function editMessage(user:PublicUser,messageId:string,body:string) {
+  const row=db.prepare(`SELECT m.user_id AS userId,m.channel_id AS channelId,m.attachment_url AS attachmentUrl,
+    m.deleted_at AS deletedAt,member.text_muted AS textMuted
+    FROM messages m JOIN channels c ON c.id=m.channel_id
+    JOIN memberships member ON member.space_id=c.space_id AND member.user_id=?
+    WHERE m.id=?`).get(user.id,messageId) as {userId:string;channelId:string;attachmentUrl?:string;deletedAt?:number;textMuted:number}|undefined;
+  if(!row)throw new Error('消息不存在或无法访问');
+  if(row.userId!==user.id)throw new Error('只能编辑自己发送的消息');
+  if(row.deletedAt)throw new Error('消息已经撤回');
+  if(row.textMuted!==0)throw new Error('你已被社区拥有者禁言');
+  if(!body&& !row.attachmentUrl)throw new Error('消息不能为空');
+  db.prepare('UPDATE messages SET body=?,edited_at=? WHERE id=?').run(body,Date.now(),messageId);
+  return hydratedMessage(user.id,messageId);
+}
+
+export function deleteMessage(user:PublicUser,messageId:string) {
+  const row=db.prepare(`SELECT m.user_id AS userId,m.channel_id AS channelId,m.deleted_at AS deletedAt,s.owner_id AS ownerId
+    FROM messages m JOIN channels c ON c.id=m.channel_id JOIN spaces s ON s.id=c.space_id
+    JOIN memberships member ON member.space_id=s.id AND member.user_id=?
+    WHERE m.id=?`).get(user.id,messageId) as {userId:string;channelId:string;deletedAt?:number;ownerId:string}|undefined;
+  if(!row)throw new Error('消息不存在或无法访问');
+  if(row.userId!==user.id&&row.ownerId!==user.id)throw new Error('只能撤回自己的消息');
+  if(!row.deletedAt){
+    db.transaction(()=>{
+      db.prepare(`UPDATE messages SET body='',attachment_url=NULL,attachment_name=NULL,attachment_size=NULL,
+        attachment_mime=NULL,edited_at=NULL,deleted_at=? WHERE id=?`).run(Date.now(),messageId);
+      db.prepare('DELETE FROM message_reactions WHERE message_id=?').run(messageId);
+    })();
+  }
+  return hydratedMessage(user.id,messageId);
+}
+
+const supportedReactions=new Set(['👍','❤️','😂','😮','😢','😡','🎉','👏','🔥','✅','❌','👀']);
+export function toggleMessageReaction(user:PublicUser,messageId:string,emoji:string) {
+  if(!supportedReactions.has(emoji))throw new Error('不支持该表情回应');
+  const row=db.prepare(`SELECT m.channel_id AS channelId,m.deleted_at AS deletedAt,member.text_muted AS textMuted
+    FROM messages m JOIN channels c ON c.id=m.channel_id
+    JOIN memberships member ON member.space_id=c.space_id AND member.user_id=?
+    WHERE m.id=?`).get(user.id,messageId) as {channelId:string;deletedAt?:number;textMuted:number}|undefined;
+  if(!row)throw new Error('消息不存在或无法访问');
+  if(row.deletedAt)throw new Error('无法回应已撤回的消息');
+  if(row.textMuted!==0)throw new Error('你已被社区拥有者禁言');
+  const existing=db.prepare('SELECT 1 FROM message_reactions WHERE message_id=? AND user_id=? AND emoji=?').get(messageId,user.id,emoji);
+  if(existing)db.prepare('DELETE FROM message_reactions WHERE message_id=? AND user_id=? AND emoji=?').run(messageId,user.id,emoji);
+  else db.prepare('INSERT INTO message_reactions(message_id,user_id,emoji,created_at) VALUES(?,?,?,?)').run(messageId,user.id,emoji,Date.now());
+  return hydratedMessage(user.id,messageId);
+}
+
+export function searchMessages(userId:string,channelId:string,query:string) {
+  requireChannelAccess(userId,channelId);
+  const escaped=query.replace(/[\\%_]/g,value=>`\\${value}`);
+  const pattern=`%${escaped}%`;
+  const rows=db.prepare(`${messageSelect}
+    WHERE m.channel_id=? AND m.deleted_at IS NULL
+      AND (m.body LIKE ? ESCAPE '\\' OR m.attachment_name LIKE ? ESCAPE '\\')
+    ORDER BY m.created_at DESC LIMIT 50`).all(channelId,pattern,pattern);
+  return hydrateMessages(rows);
+}
+
+export function mentionedUserIds(channelId:string,body:string) {
+  if(!body.includes('@'))return [];
+  const members=db.prepare(`SELECT u.id,u.username FROM channels c JOIN memberships m ON m.space_id=c.space_id
+    JOIN users u ON u.id=m.user_id WHERE c.id=?`).all(channelId) as Array<{id:string;username:string}>;
+  const normalized=body.toLocaleLowerCase('zh-CN');
+  return members.filter(member=>{
+    const mention=`@${member.username.toLocaleLowerCase('zh-CN')}`;
+    let index=normalized.indexOf(mention);
+    while(index>=0){
+      const next=normalized[index+mention.length];
+      if(!next||/[\s,，。.!！?？:：;；、)\]}]/u.test(next))return true;
+      index=normalized.indexOf(mention,index+mention.length);
+    }
+    return false;
+  }).map(member=>member.id);
 }
 
 export function channelSpaceId(channelId:string) {

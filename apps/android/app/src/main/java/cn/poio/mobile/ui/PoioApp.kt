@@ -47,6 +47,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -62,11 +63,15 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.KeyboardVoice
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.WifiOff
@@ -392,10 +397,19 @@ private fun HomeScreen(
                     key(channel.id) {
                     ChatScreen(
                         messages = state.messages,
+                        currentUserId = state.user?.id,
+                        canModerate = state.selectedSpace?.ownerId == state.user?.id,
                         busy = state.busy,
+                        searchResults = state.messageSearchResults,
+                        searchBusy = state.messageSearchBusy,
                         onSend = actions::sendMessage,
                         onAttach = actions::sendAttachment,
-                            modifier = Modifier.padding(channelPadding),
+                        onEdit = actions::editMessage,
+                        onDelete = actions::deleteMessage,
+                        onReact = actions::reactMessage,
+                        onSearch = actions::searchMessages,
+                        onClearSearch = actions::clearMessageSearch,
+                        modifier = Modifier.padding(channelPadding),
                     )
                 }
                 }
@@ -405,6 +419,7 @@ private fun HomeScreen(
                     busy = state.busy,
                     serverVersion = state.capabilities?.serverVersion,
                     currentUserId = state.user?.id,
+                    canModerate = state.selectedSpace?.ownerId == state.user?.id,
                     members = state.voiceMembers[channel.id].orEmpty(),
                     joined = state.voiceChannelId == channel.id,
                     voiceState = voiceState,
@@ -420,6 +435,13 @@ private fun HomeScreen(
                     onUserVolume = actions::setUserVolume,
                     onSendMessage = actions::sendMessage,
                     onAttachMessage = actions::sendAttachment,
+                    searchResults = state.messageSearchResults,
+                    searchBusy = state.messageSearchBusy,
+                    onEditMessage = actions::editMessage,
+                    onDeleteMessage = actions::deleteMessage,
+                    onReactMessage = actions::reactMessage,
+                    onSearchMessages = actions::searchMessages,
+                    onClearMessageSearch = actions::clearMessageSearch,
                     onBack = { channelOpen = false },
                     onSettings = { settingsDialog = true },
                     modifier = Modifier.padding(padding),
@@ -1046,12 +1068,29 @@ private fun CommunityDrawer(
 @Composable
 private fun ChatScreen(
     messages: List<ChatMessage>,
+    currentUserId: String?,
+    canModerate: Boolean,
     busy: Boolean,
-    onSend: (String) -> Unit,
-    onAttach: (android.net.Uri, String) -> Unit,
+    searchResults: List<ChatMessage>,
+    searchBusy: Boolean,
+    onSend: (String, String?) -> Unit,
+    onAttach: (android.net.Uri, String, String?) -> Unit,
+    onEdit: (String, String) -> Unit,
+    onDelete: (String) -> Unit,
+    onReact: (String, String) -> Unit,
+    onSearch: (String) -> Unit,
+    onClearSearch: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var body by rememberSaveable { mutableStateOf("") }
+    var replyingTo by remember { mutableStateOf<ChatMessage?>(null) }
+    var editingMessage by remember { mutableStateOf<ChatMessage?>(null) }
+    var draftBeforeEdit by remember { mutableStateOf("") }
+    var actionMessage by remember { mutableStateOf<ChatMessage?>(null) }
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var searchPerformed by rememberSaveable { mutableStateOf(false) }
+    var highlightedMessageId by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
@@ -1069,7 +1108,8 @@ private fun ChatScreen(
         if (uri != null) {
             val caption = body
             body = ""
-            onAttach(uri, caption)
+            onAttach(uri, caption, replyingTo?.id)
+            replyingTo = null
         }
     }
     LaunchedEffect(messages.lastOrNull()?.id) {
@@ -1097,6 +1137,104 @@ private fun ChatScreen(
             },
     ) {
         Column(Modifier.fillMaxSize().padding(bottom = remainingBottomInset)) {
+        if (searchOpen) {
+            Column(
+                Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = {
+                            searchQuery = it.take(100)
+                            searchPerformed = false
+                        },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Default.Search, null) },
+                        placeholder = { Text("搜索当前频道消息") },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = {
+                            if (searchQuery.isNotBlank()) {
+                                searchPerformed = true
+                                onSearch(searchQuery)
+                            }
+                        }),
+                    )
+                    IconButton(
+                        enabled = searchQuery.isNotBlank() && !searchBusy,
+                        onClick = {
+                            searchPerformed = true
+                            onSearch(searchQuery)
+                        },
+                    ) {
+                        if (searchBusy) CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.AutoMirrored.Filled.Send, "搜索")
+                    }
+                    IconButton(onClick = {
+                        searchOpen = false
+                        searchQuery = ""
+                        searchPerformed = false
+                        onClearSearch()
+                    }) { Icon(Icons.Default.Close, "关闭搜索") }
+                }
+                if (searchResults.isNotEmpty()) {
+                    LazyColumn(
+                        Modifier.fillMaxWidth().heightIn(max = 220.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                    ) {
+                        items(searchResults, key = { "search-${it.id}" }) { result ->
+                            Row(
+                                Modifier.fillMaxWidth().clickable {
+                                    val index = messages.indexOfFirst { it.id == result.id }
+                                    if (index >= 0) {
+                                        highlightedMessageId = result.id
+                                        scope.launch { listState.animateScrollToItem(index + 1) }
+                                    }
+                                    searchOpen = false
+                                    onClearSearch()
+                                }.padding(horizontal = 12.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(9.dp),
+                            ) {
+                                UserAvatar(result.avatarUrl, result.username, 30.dp)
+                                Column(Modifier.weight(1f)) {
+                                    Text(result.username, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text(
+                                        result.body.ifBlank { result.attachmentName ?: "附件" },
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 11.sp,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else if (searchPerformed && !searchBusy) {
+                    Text(
+                        "没有找到匹配的消息",
+                        Modifier.fillMaxWidth().padding(vertical = 7.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                }
+            }
+        } else {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = { searchOpen = true }) {
+                    Icon(Icons.Default.Search, null, Modifier.size(17.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("搜索消息")
+                }
+            }
+        }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
                 state = listState,
@@ -1104,7 +1242,15 @@ private fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 item { Spacer(Modifier.height(12.dp)) }
-                items(messages, key = ChatMessage::id) { MessageCard(it) }
+                items(messages, key = ChatMessage::id) { message ->
+                    MessageCard(
+                        message = message,
+                        currentUserId = currentUserId,
+                        highlighted = highlightedMessageId == message.id,
+                        onActions = { actionMessage = message },
+                        onReact = { emoji -> onReact(message.id, emoji) },
+                    )
+                }
                 item { Spacer(Modifier.height(8.dp)) }
             }
             if (!nearBottom && messages.isNotEmpty()) {
@@ -1118,10 +1264,46 @@ private fun ChatScreen(
                 }
             }
         }
+        (editingMessage ?: replyingTo)?.let { context ->
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(start = 11.dp, end = 4.dp, top = 7.dp, bottom = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    if (editingMessage != null) Icons.Default.Edit else Icons.AutoMirrored.Filled.Reply,
+                    null,
+                    Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (editingMessage != null) "编辑消息" else "回复 ${context.username}",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                    )
+                    Text(
+                        context.body.ifBlank { context.attachmentName ?: "已撤回的消息" },
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 10.sp,
+                    )
+                }
+                IconButton(onClick = {
+                    if (editingMessage != null) body = draftBeforeEdit
+                    editingMessage = null
+                    replyingTo = null
+                }) { Icon(Icons.Default.Close, "取消") }
+            }
+        }
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             IconButton(
                 onClick = { filePicker.launch(arrayOf("*/*")) },
-                enabled = !busy,
+                enabled = !busy && editingMessage == null,
                 modifier = Modifier.size(52.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(16.dp)),
             ) { Icon(Icons.Default.AttachFile, "发送图片或文件") }
             OutlinedTextField(
@@ -1132,13 +1314,59 @@ private fun ChatScreen(
                 maxLines = 5,
             )
             IconButton(
-                onClick = { val value = body; body = ""; onSend(value) },
-                enabled = body.isNotBlank() && !busy,
+                onClick = {
+                    val value = body
+                    val editing = editingMessage
+                    body = ""
+                    if (editing != null) {
+                        onEdit(editing.id, value)
+                        editingMessage = null
+                        draftBeforeEdit = ""
+                    } else {
+                        onSend(value, replyingTo?.id)
+                        replyingTo = null
+                    }
+                },
+                enabled = (body.isNotBlank() || editingMessage?.attachmentUrl != null) && !busy,
                 modifier = Modifier.size(52.dp).background(MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp)),
-            ) { Icon(Icons.AutoMirrored.Filled.Send, "发送", tint = Color.White) }
+            ) {
+                Icon(
+                    if (editingMessage != null) Icons.Default.Edit else Icons.AutoMirrored.Filled.Send,
+                    if (editingMessage != null) "保存修改" else "发送",
+                    tint = Color.White,
+                )
+            }
         }
     }
-}
+    }
+    actionMessage?.let { message ->
+        MessageActionsSheet(
+            message = message,
+            own = message.userId == currentUserId,
+            canModerate = canModerate,
+            onDismiss = { actionMessage = null },
+            onReply = {
+                replyingTo = message
+                editingMessage = null
+                actionMessage = null
+            },
+            onEdit = {
+                draftBeforeEdit = body
+                body = message.body
+                editingMessage = message
+                replyingTo = null
+                actionMessage = null
+            },
+            onDelete = {
+                onDelete(message.id)
+                actionMessage = null
+            },
+            onReact = { emoji ->
+                onReact(message.id, emoji)
+                actionMessage = null
+            },
+        )
+    }
 }
 
 internal fun remainingImeInset(
@@ -1152,14 +1380,65 @@ internal fun remainingImeInset(
 }
 
 @Composable
-private fun MessageCard(message: ChatMessage) {
+private fun MessageCard(
+    message: ChatMessage,
+    currentUserId: String?,
+    highlighted: Boolean,
+    onActions: () -> Unit,
+    onReact: (String) -> Unit,
+) {
     val uriHandler = LocalUriHandler.current
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Row(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (highlighted) MaterialTheme.colorScheme.primary.copy(alpha = .16f) else Color.Transparent)
+            .pointerInput(message.id, message.deleted) {
+                if (!message.deleted) detectTapGestures(onLongPress = { onActions() })
+            }
+            .padding(horizontal = 7.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
         UserAvatar(message.avatarUrl, message.username, 36.dp)
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 Text(message.username, fontWeight = FontWeight.Bold)
                 Text(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(message.createdAt)), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (message.editedAt != null) {
+                    Text("已编辑", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            message.reply?.let { reply ->
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 5.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .7f))
+                        .padding(horizontal = 9.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Reply, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                    Column(Modifier.weight(1f)) {
+                        Text(reply.username, color = MaterialTheme.colorScheme.primary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            if (reply.deleted) "原消息已撤回" else reply.body.ifBlank { reply.attachmentName ?: "附件" },
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 10.sp,
+                        )
+                    }
+                }
+            }
+            if (message.deleted) {
+                Row(
+                    Modifier.padding(top = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Icon(Icons.Default.Delete, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("消息已撤回", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontStyle = FontStyle.Italic)
+                }
+                return@Column
             }
             if (message.body.isNotBlank()) MarkdownMessage(message.body, Modifier.padding(top = 3.dp))
             val attachmentUrl = message.attachmentUrl?.let(::poioAssetUrl)
@@ -1184,6 +1463,87 @@ private fun MessageCard(message: ChatMessage) {
                         Text(message.attachmentName ?: "附件", maxLines = 2)
                         message.attachmentSize?.let { Text(formatBytes(it), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     }
+                }
+            }
+            if (message.reactions.isNotEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    message.reactions.take(7).forEach { reaction ->
+                        TextButton(
+                            onClick = { onReact(reaction.emoji) },
+                            modifier = Modifier.height(31.dp)
+                                .border(
+                                    1.dp,
+                                    if (currentUserId in reaction.userIds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = .35f),
+                                    RoundedCornerShape(9.dp),
+                                ),
+                        ) {
+                            Text("${reaction.emoji} ${reaction.count}", fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private val messageReactionChoices = listOf("👍", "❤️", "😂", "😮", "😢", "😡", "🎉", "👏", "🔥", "✅", "❌", "👀")
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun MessageActionsSheet(
+    message: ChatMessage,
+    own: Boolean,
+    canModerate: Boolean,
+    onDismiss: () -> Unit,
+    onReply: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onReact: (String) -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 26.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(message.username, fontWeight = FontWeight.Bold)
+            Text(
+                message.body.ifBlank { message.attachmentName ?: "附件" },
+                maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+            )
+            messageReactionChoices.chunked(6).forEach { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    row.forEach { emoji ->
+                        IconButton(
+                            onClick = { onReact(emoji) },
+                            modifier = Modifier.size(45.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)),
+                        ) { Text(emoji, fontSize = 20.sp) }
+                    }
+                }
+            }
+            FilledTonalButton(onClick = onReply, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.AutoMirrored.Filled.Reply, null)
+                Spacer(Modifier.width(8.dp))
+                Text("回复")
+            }
+            if (own) {
+                FilledTonalButton(onClick = onEdit, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Edit, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("编辑消息")
+                }
+            }
+            if (own || canModerate) {
+                TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(8.dp))
+                    Text("撤回消息", color = MaterialTheme.colorScheme.error)
                 }
             }
         }
@@ -1360,6 +1720,7 @@ private fun VoiceRoom(
     busy: Boolean,
     serverVersion: String?,
     currentUserId: String?,
+    canModerate: Boolean,
     members: List<cn.poio.mobile.model.User>,
     joined: Boolean,
     voiceState: VoiceState,
@@ -1373,8 +1734,15 @@ private fun VoiceRoom(
     onDeafen: (Boolean) -> Unit,
     onRoute: (Int) -> Unit,
     onUserVolume: (Int, Int) -> Unit,
-    onSendMessage: (String) -> Unit,
-    onAttachMessage: (android.net.Uri, String) -> Unit,
+    onSendMessage: (String, String?) -> Unit,
+    onAttachMessage: (android.net.Uri, String, String?) -> Unit,
+    searchResults: List<ChatMessage>,
+    searchBusy: Boolean,
+    onEditMessage: (String, String) -> Unit,
+    onDeleteMessage: (String) -> Unit,
+    onReactMessage: (String, String) -> Unit,
+    onSearchMessages: (String) -> Unit,
+    onClearMessageSearch: () -> Unit,
     onBack: () -> Unit,
     onSettings: () -> Unit,
     modifier: Modifier = Modifier,
@@ -1420,9 +1788,18 @@ private fun VoiceRoom(
         ) { chatPadding ->
             ChatScreen(
                 messages = messages,
+                currentUserId = currentUserId,
+                canModerate = canModerate,
                 busy = busy,
+                searchResults = searchResults,
+                searchBusy = searchBusy,
                 onSend = onSendMessage,
                 onAttach = onAttachMessage,
+                onEdit = onEditMessage,
+                onDelete = onDeleteMessage,
+                onReact = onReactMessage,
+                onSearch = onSearchMessages,
+                onClearSearch = onClearMessageSearch,
                 modifier = Modifier.padding(chatPadding),
             )
         }

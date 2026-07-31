@@ -1,8 +1,8 @@
 {
-  "versionCode": 24,
-  "versionName": "0.1.0-p23",
+  "versionCode": 25,
+  "versionName": "0.1.0-p24",
   "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
-  "sha256": "14D11583580D3E742ADD2184517C92425C806EF4E25E46EE8844FBF2B0F677E9",
-  "size": 44110388,
-  "notes": "修复部分手机输入法遮挡聊天输入框的问题；现在会检测窗口已经避让的高度，只补齐剩余键盘高度，同时避免输入区上方出现大块空白。包含语音房间消息入口、离线状态卡、快速语音重连和共享声音开关。"
+  "sha256": "CF86EA0071955DDC3A8B01B4A055D8D57F2C98F013D4E54A085DC036CEA317FF",
+  "size": 44159540,
+  "notes": "完善文字频道与语音频道聊天：支持回复、编辑、撤回、12 种表情回应和消息搜索；长按消息即可操作，其他设备的修改会实时同步。保留图片、文件、Markdown、动态头像、原生 Mumble 语音和桌面共享观看能力。"
 }

@@ -1,7 +1,7 @@
 import { io } from 'socket.io-client';
 
 const origin=process.env.ECHODECK_SMOKE_URL??'https://115.159.222.29';
-const socket=io(origin,{path:'/echodeck/socket.io',transports:['websocket'],reconnection:false});
+const socket=io(origin,{path:'/poio/socket.io',transports:['websocket'],reconnection:false});
 const request=(event,payload={})=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error(`${event} timeout`)),15000);socket.emit(event,payload,(reply)=>{clearTimeout(timer);reply?.ok?resolve(reply.value):reject(new Error(reply?.error??`${event} failed`))})});
 await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('connect_error',reject)});
 try {
@@ -13,14 +13,14 @@ try {
   const unicodeName='测试图片-聊天截图.png';
   const form=new FormData();
   form.append('file',new File([new Uint8Array([137,80,78,71])],unicodeName,{type:'image/png'}));
-  const uploadResponse=await fetch(`${origin}/echodeck/api/uploads`,{method:'POST',headers:{Authorization:`Bearer ${auth.token}`},body:form});
+  const uploadResponse=await fetch(`${origin}/poio/api/uploads`,{method:'POST',headers:{Authorization:`Bearer ${auth.token}`},body:form});
   const uploaded=await uploadResponse.json();
   if(!uploadResponse.ok||uploaded.name!==unicodeName)throw new Error(`unicode upload filename mismatch: ${JSON.stringify(uploaded)}`);
   await request('chat:send',{channelId:text.id,body:'',attachment:uploaded});
   const history=await request('chat:history',{channelId:text.id});
   if(history.at(-1)?.attachmentName!==unicodeName)throw new Error(`unicode history filename mismatch: ${JSON.stringify(history.at(-1))}`);
   const avatarForm=new FormData();avatarForm.append('file',new File([new Uint8Array([71,73,70,56,57,97])],'动态头像.gif',{type:'image/gif'}));
-  const avatarResponse=await fetch(`${origin}/echodeck/api/uploads`,{method:'POST',headers:{Authorization:`Bearer ${auth.token}`},body:avatarForm});const avatarUpload=await avatarResponse.json();
+  const avatarResponse=await fetch(`${origin}/poio/api/uploads`,{method:'POST',headers:{Authorization:`Bearer ${auth.token}`},body:avatarForm});const avatarUpload=await avatarResponse.json();
   const updatedUser=await request('user:avatar',{url:avatarUpload.url});const members=await request('space:members',{spaceId:auth.bootstrap[0].id});
   if(!avatarResponse.ok||!updatedUser.avatarUrl?.endsWith('.gif')||members.find(item=>item.id===auth.user.id)?.avatarUrl!==updatedUser.avatarUrl)throw new Error(`animated avatar mismatch: ${JSON.stringify({avatarUpload,updatedUser,members})}`);
   const credentials=await request('voice:credentials',{channelId:voice.id});

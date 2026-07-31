@@ -23,6 +23,7 @@ mumble-certs/
 .DS_Store
 Thumbs.db
 .tooling/
+.tmp/
 .gradle/
 .idea/
 local.properties

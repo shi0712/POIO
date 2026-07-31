@@ -7,11 +7,26 @@ data class User(val id: String, val username: String, val avatarUrl: String? = n
 data class Channel(val id: String, val name: String, val kind: ChannelKind, val spaceId: String? = null, val position: Int = 0)
 enum class ChannelKind { TEXT, VOICE }
 data class Space(val id: String, val name: String, val ownerId: String, val channels: List<Channel>)
+data class ChatReply(
+    val id: String,
+    val userId: String,
+    val username: String,
+    val body: String,
+    val attachmentName: String? = null,
+    val deleted: Boolean = false,
+)
+data class ChatReaction(
+    val emoji: String,
+    val count: Int,
+    val userIds: List<String>,
+)
 data class ChatMessage(
     val id: String,
     val channelId: String,
     val body: String,
     val createdAt: Long,
+    val editedAt: Long? = null,
+    val deleted: Boolean = false,
     val userId: String,
     val username: String,
     val avatarUrl: String? = null,
@@ -19,6 +34,8 @@ data class ChatMessage(
     val attachmentName: String? = null,
     val attachmentSize: Long? = null,
     val attachmentMime: String? = null,
+    val reply: ChatReply? = null,
+    val reactions: List<ChatReaction> = emptyList(),
 )
 data class UploadedAttachment(
     val url: String,
@@ -62,6 +79,8 @@ object PoioJson {
         channelId = value.getString("channelId"),
         body = value.optString("body"),
         createdAt = value.getLong("createdAt"),
+        editedAt = value.takeIf { it.has("editedAt") && !it.isNull("editedAt") }?.getLong("editedAt"),
+        deleted = value.optBoolean("deleted"),
         userId = value.getString("userId"),
         username = value.getString("username"),
         avatarUrl = value.nullableString("avatarUrl"),
@@ -69,6 +88,23 @@ object PoioJson {
         attachmentName = value.nullableString("attachmentName"),
         attachmentSize = value.takeIf { it.has("attachmentSize") && !it.isNull("attachmentSize") }?.getLong("attachmentSize"),
         attachmentMime = value.nullableString("attachmentMime"),
+        reply = value.optJSONObject("reply")?.let(::reply),
+        reactions = value.optJSONArray("reactions").objects().map(::reaction),
+    )
+
+    fun reply(value: JSONObject) = ChatReply(
+        id = value.getString("id"),
+        userId = value.getString("userId"),
+        username = value.getString("username"),
+        body = value.optString("body"),
+        attachmentName = value.nullableString("attachmentName"),
+        deleted = value.optBoolean("deleted"),
+    )
+
+    fun reaction(value: JSONObject) = ChatReaction(
+        emoji = value.getString("emoji"),
+        count = value.optInt("count"),
+        userIds = value.optJSONArray("userIds").strings(),
     )
 
     fun auth(value: JSONObject) = AuthPayload(
@@ -91,4 +127,9 @@ private fun JSONObject.nullableString(name: String): String? =
 fun JSONArray?.objects(): List<JSONObject> {
     if (this == null) return emptyList()
     return buildList(length()) { for (index in 0 until length()) add(getJSONObject(index)) }
+}
+
+private fun JSONArray?.strings(): List<String> {
+    if (this == null) return emptyList()
+    return buildList(length()) { for (index in 0 until length()) add(getString(index)) }
 }

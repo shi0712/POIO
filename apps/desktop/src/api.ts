@@ -4,10 +4,17 @@ export type User = { id: string; username: string; avatarUrl?:string; joinSoundU
 export type SpaceMember = User & { role:'owner'|'admin'|'member'; textMuted:boolean; voiceMuted:boolean };
 export type Channel = { id: string; spaceId?: string; name: string; kind: 'text'|'voice'; position: number };
 export type Space = { id: string; name: string; ownerId: string; channels: Channel[] };
-export type ChatMessage = { id:string;channelId:string;body:string;createdAt:number;userId:string;username:string;avatarUrl?:string;attachmentUrl?:string;attachmentName?:string;attachmentSize?:number;attachmentMime?:string };
+export type ChatReaction = { emoji:string;count:number;userIds:string[] };
+export type ChatReply = { id:string;userId:string;username:string;body:string;attachmentName?:string;deleted:boolean };
+export type ChatMessage = {
+  id:string;channelId:string;body:string;createdAt:number;editedAt?:number;deleted:boolean;
+  userId:string;username:string;avatarUrl?:string;
+  attachmentUrl?:string;attachmentName?:string;attachmentSize?:number;attachmentMime?:string;
+  reply?:ChatReply;reactions:ChatReaction[];
+};
 type Reply<T> = {ok:true;value:T}|{ok:false;error:string};
 
-export const serverUrl = import.meta.env.VITE_SERVER_URL ?? 'https://115.159.222.29/echodeck';
+export const serverUrl = import.meta.env.VITE_SERVER_URL ?? 'https://115.159.222.29/poio';
 const endpoint=new URL(serverUrl); const socketPath=`${endpoint.pathname.replace(/\/$/,'')}/socket.io`||'/socket.io';
 export const socket: Socket = io(endpoint.origin, { path:socketPath,autoConnect: true, transports: ['websocket','polling'], reconnectionDelayMax: 5000 });
 const sessionKey='echodeck.session';

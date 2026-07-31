@@ -1,7 +1,7 @@
 import { io } from 'socket.io-client';
 
 const origin=process.env.ECHODECK_SMOKE_URL??'https://115.159.222.29';
-const createSocket=()=>io(origin,{path:'/echodeck/socket.io',transports:['websocket'],reconnection:false});
+const createSocket=()=>io(origin,{path:'/poio/socket.io',transports:['websocket'],reconnection:false});
 const connected=socket=>new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('connect_error',reject)});
 const request=(socket,event,payload={})=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error(`${event} timeout`)),15000);socket.emit(event,payload,reply=>{clearTimeout(timer);reply?.ok?resolve(reply.value):reject(new Error(reply?.error??`${event} failed`))})});
 const nextPresence=(socket,channelId)=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('voice:presence timeout')),5000);const listener=event=>{if(event.channelId!==channelId)return;clearTimeout(timer);socket.off('voice:presence',listener);resolve(event)};socket.on('voice:presence',listener)});

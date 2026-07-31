@@ -104,8 +104,13 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
     override fun selectChannel(id: String) {
         viewModelScope.launch { repository.selectChannel(id) }
     }
-    override fun sendMessage(body: String) { viewModelScope.launch { repository.sendMessage(body) } }
-    override fun sendAttachment(uri: Uri, body: String) { viewModelScope.launch { repository.sendAttachment(uri, body) } }
+    override fun sendMessage(body: String, replyToId: String?) { viewModelScope.launch { repository.sendMessage(body, replyToId) } }
+    override fun sendAttachment(uri: Uri, body: String, replyToId: String?) { viewModelScope.launch { repository.sendAttachment(uri, body, replyToId) } }
+    override fun editMessage(messageId: String, body: String) { viewModelScope.launch { repository.editMessage(messageId, body) } }
+    override fun deleteMessage(messageId: String) { viewModelScope.launch { repository.deleteMessage(messageId) } }
+    override fun reactMessage(messageId: String, emoji: String) { viewModelScope.launch { repository.reactMessage(messageId, emoji) } }
+    override fun searchMessages(query: String) { viewModelScope.launch { repository.searchMessages(query) } }
+    override fun clearMessageSearch() = repository.clearMessageSearch()
     override fun updateAvatar(uri: Uri) { viewModelScope.launch { repository.updateAvatar(uri) } }
     override fun createSpace(name: String) { viewModelScope.launch { repository.createSpace(name) } }
     override fun joinSpace(code: String) { viewModelScope.launch { repository.joinSpace(code) } }
@@ -245,8 +250,13 @@ interface PoioActions {
     fun logout()
     fun selectSpace(id: String)
     fun selectChannel(id: String)
-    fun sendMessage(body: String)
-    fun sendAttachment(uri: Uri, body: String)
+    fun sendMessage(body: String, replyToId: String? = null)
+    fun sendAttachment(uri: Uri, body: String, replyToId: String? = null)
+    fun editMessage(messageId: String, body: String)
+    fun deleteMessage(messageId: String)
+    fun reactMessage(messageId: String, emoji: String)
+    fun searchMessages(query: String)
+    fun clearMessageSearch()
     fun updateAvatar(uri: Uri)
     fun createSpace(name: String)
     fun joinSpace(code: String)

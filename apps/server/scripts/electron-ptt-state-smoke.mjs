@@ -6,7 +6,7 @@ import { io } from 'socket.io-client';
 
 const origin=process.env.ECHODECK_SMOKE_URL??'https://115.159.222.29';
 const debugPort=Number(process.env.POIO_PTT_SMOKE_PORT??9337);
-const socket=io(origin,{path:'/echodeck/socket.io',transports:['websocket'],reconnection:false});
+const socket=io(origin,{path:'/poio/socket.io',transports:['websocket'],reconnection:false});
 const request=(event,payload={})=>new Promise((resolve,reject)=>{
   const timer=setTimeout(()=>reject(new Error(`${event} timeout`)),15_000);
   socket.emit(event,payload,(reply)=>{

@@ -4,7 +4,7 @@ import { io } from "socket.io-client";
 
 const origin = process.env.ECHODECK_SMOKE_URL ?? "https://115.159.222.29";
 const socket = io(origin, {
-  path: "/echodeck/socket.io",
+  path: "/poio/socket.io",
   transports: ["websocket"],
   reconnection: false,
 });
@@ -154,7 +154,7 @@ try {
   );
   const avatarForm = new FormData();
   avatarForm.append("file", new File([Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64")], "动态头像.gif", { type: "image/gif" }));
-  const avatarResponse = await fetch(`${origin}/echodeck/api/uploads`, { method: "POST", headers: { Authorization: `Bearer ${auth.token}` }, body: avatarForm });
+  const avatarResponse = await fetch(`${origin}/poio/api/uploads`, { method: "POST", headers: { Authorization: `Bearer ${auth.token}` }, body: avatarForm });
   const avatarUpload = await avatarResponse.json();
   const updatedUser = await request("user:avatar", { url: avatarUpload.url });
   const avatarUi = await evaluate(

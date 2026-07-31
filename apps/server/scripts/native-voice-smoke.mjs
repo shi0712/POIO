@@ -6,7 +6,7 @@ import { rmSync, writeFileSync } from 'node:fs';
 import { io } from 'socket.io-client';
 
 const origin=process.env.ECHODECK_SMOKE_URL??'https://115.159.222.29';
-const socket=io(origin,{path:'/echodeck/socket.io',transports:['websocket'],reconnection:false});
+const socket=io(origin,{path:'/poio/socket.io',transports:['websocket'],reconnection:false});
 const request=(event,payload={})=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error(`${event} timeout`)),15000);socket.emit(event,payload,(reply)=>{clearTimeout(timer);reply?.ok?resolve(reply.value):reject(new Error(reply?.error??`${event} failed`))})});
 const pipeSuffix=`smoke-${process.pid}`;
 const pipe=`${String.raw`\\.\pipe\EchoDeckMumble`}-${pipeSuffix}`;

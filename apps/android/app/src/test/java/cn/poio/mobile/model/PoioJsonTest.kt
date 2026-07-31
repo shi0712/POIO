@@ -54,4 +54,29 @@ class PoioJsonTest {
         assertEquals(2048L, message.attachmentSize)
         assertEquals("/uploads/avatar.gif", message.avatarUrl)
     }
+
+    @Test
+    fun parsesReplyEditDeletionAndReactions() {
+        val value = JSONObject(
+            """{
+              "id":"m2","channelId":"c1","body":"收到","createdAt":1784740000001,
+              "editedAt":1784740005000,"deleted":false,
+              "userId":"u2","username":"guest",
+              "reply":{"id":"m1","userId":"u1","username":"owner","body":"欢迎","deleted":false},
+              "reactions":[
+                {"emoji":"👍","count":2,"userIds":["u1","u2"]},
+                {"emoji":"❤️","count":1,"userIds":["u1"]}
+              ]
+            }""".trimIndent(),
+        )
+
+        val message = PoioJson.message(value)
+
+        assertEquals(1784740005000L, message.editedAt)
+        assertEquals("owner", message.reply?.username)
+        assertEquals("欢迎", message.reply?.body)
+        assertEquals(2, message.reactions.size)
+        assertEquals(listOf("u1", "u2"), message.reactions.first().userIds)
+        assertEquals(2, message.reactions.first().count)
+    }
 }

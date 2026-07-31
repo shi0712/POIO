@@ -8,7 +8,7 @@ import { nanoid } from 'nanoid';
 import { Server } from 'socket.io';
 import { z } from 'zod';
 import { config } from './config.js';
-import { bootstrap, channelMessages, channelSpaceId, createChannel, createMessage, createSpace, createSpaceInvite, deleteChannel, joinSpace, login, previewSpaceInvite, register, removeSpaceMember, renameChannel, renameSpace, resume, revokeSession, scheduleDatabaseBackups, spaceMemberIds, spaceMembers, updateAvatar, updateJoinSound, updateMemberModeration, userFromToken, voiceChannelForUser, type PublicUser } from './database.js';
+import { bootstrap, channelMessages, channelSpaceId, createChannel, createMessage, createSpace, createSpaceInvite, deleteChannel, deleteMessage, editMessage, joinSpace, login, mentionedUserIds, previewSpaceInvite, register, removeSpaceMember, renameChannel, renameSpace, resume, revokeSession, scheduleDatabaseBackups, searchMessages, spaceMemberIds, spaceMembers, toggleMessageReaction, updateAvatar, updateJoinSound, updateMemberModeration, userFromToken, voiceChannelForUser, type PublicUser } from './database.js';
 import * as media from './media.js';
 import { claimMumbleUsername, ensureVoiceChannel, kickMumbleUser, mumbleChannelName, removeVoiceChannel, setMumbleUserMuted } from './mumble-control.js';
 
@@ -44,7 +44,7 @@ app.post('/api/uploads',upload.single('file'),(req,res)=>{
   if(!req.file){res.status(400).json({error:'没有收到文件'});return;}
   res.json({url:`/uploads/${req.file.filename}`,name:req.file.originalname,size:req.file.size,mime:req.file.mimetype||'application/octet-stream'});
 });
-app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '0.5.1' }));
+app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '0.6.0' }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: config.corsOrigin }, maxHttpBufferSize: 2_000_000, transports: ['websocket','polling'] });
 
@@ -145,8 +145,8 @@ const forceUserOutOfSpace = async(spaceId:string,userId:string,reason:string) =>
 io.on('connection', (socket) => {
   socket.on('app:capabilities', (_raw, ack: Ack) => { ok(ack,{
     protocolVersion:1,
-    serverVersion:'0.5.1',
-    features:{chat:true,attachments:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,voiceLeaveCues:true,customJoinSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true},
+    serverVersion:'0.6.0',
+    features:{chat:true,attachments:true,chatReplies:true,chatEditing:true,chatReactions:true,chatSearch:true,chatMentions:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,voiceLeaveCues:true,customJoinSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true},
     media:{codecs:['video/H264','video/VP8','audio/opus'],webRtcPort:config.mediaPort},
     android:{minimumVersion:1,recommendedVersion:1}
   }); });
@@ -219,7 +219,44 @@ io.on('connection', (socket) => {
     ok(ack,removed);
   } catch(e){fail(ack,e);} });
   socket.on('chat:history', (raw, ack: Ack) => { try { ok(ack,channelMessages(auth(socket).id,z.object({channelId:z.string()}).parse(raw).channelId)); } catch(e){fail(ack,e);} });
-  socket.on('chat:send', (raw, ack: Ack) => { try { const v=z.object({channelId:z.string(),body:z.string().trim().max(4000).default(''),attachment:z.object({url:z.string().startsWith('/uploads/'),name:z.string().min(1).max(255),size:z.number().int().max(50*1024*1024),mime:z.string().max(128)}).optional()}).refine(v=>v.body.length>0||v.attachment,'消息不能为空').parse(raw); const user=auth(socket); const msg=createMessage(user,v.channelId,v.body,v.attachment); io.to(`channel:${v.channelId}`).emit('chat:message',msg); const spaceId=channelSpaceId(v.channelId); if(spaceId)io.to(`space:${spaceId}`).emit('chat:activity',{channelId:v.channelId,messageId:msg.id,userId:user.id}); ok(ack,msg); } catch(e){fail(ack,e);} });
+  socket.on('chat:send', (raw, ack: Ack) => { try {
+    const v=z.object({
+      channelId:z.string(),
+      body:z.string().trim().max(4000).default(''),
+      replyToId:z.string().optional(),
+      attachment:z.object({url:z.string().startsWith('/uploads/'),name:z.string().min(1).max(255),size:z.number().int().max(50*1024*1024),mime:z.string().max(128)}).optional(),
+    }).refine(value=>value.body.length>0||value.attachment,'消息不能为空').parse(raw);
+    const user=auth(socket);
+    const msg=createMessage(user,v.channelId,v.body,v.attachment,v.replyToId);
+    io.to(`channel:${v.channelId}`).emit('chat:message',msg);
+    const mentions=mentionedUserIds(v.channelId,v.body).filter(userId=>userId!==user.id);
+    for(const userId of mentions)for(const connected of socketsForUser(userId))connected.emit('chat:mention',{channelId:v.channelId,message:msg});
+    const spaceId=channelSpaceId(v.channelId);
+    if(spaceId)io.to(`space:${spaceId}`).emit('chat:activity',{channelId:v.channelId,messageId:msg.id,userId:user.id,mentionedUserIds:mentions});
+    ok(ack,msg);
+  } catch(e){fail(ack,e);} });
+  socket.on('chat:edit', (raw, ack: Ack) => { try {
+    const value=z.object({messageId:z.string(),body:z.string().trim().max(4000)}).parse(raw);
+    const msg=editMessage(auth(socket),value.messageId,value.body);
+    io.to(`channel:${msg.channelId}`).emit('chat:messageUpdated',msg);
+    ok(ack,msg);
+  } catch(e){fail(ack,e);} });
+  socket.on('chat:delete', (raw, ack: Ack) => { try {
+    const value=z.object({messageId:z.string()}).parse(raw);
+    const msg=deleteMessage(auth(socket),value.messageId);
+    io.to(`channel:${msg.channelId}`).emit('chat:messageUpdated',msg);
+    ok(ack,msg);
+  } catch(e){fail(ack,e);} });
+  socket.on('chat:react', (raw, ack: Ack) => { try {
+    const value=z.object({messageId:z.string(),emoji:z.string().min(1).max(8)}).parse(raw);
+    const msg=toggleMessageReaction(auth(socket),value.messageId,value.emoji);
+    io.to(`channel:${msg.channelId}`).emit('chat:messageUpdated',msg);
+    ok(ack,msg);
+  } catch(e){fail(ack,e);} });
+  socket.on('chat:search', (raw, ack: Ack) => { try {
+    const value=z.object({channelId:z.string(),query:z.string().trim().min(1).max(100)}).parse(raw);
+    ok(ack,searchMessages(auth(socket).id,value.channelId,value.query));
+  } catch(e){fail(ack,e);} });
   socket.on('channel:watch', (raw, ack: Ack) => { try { const channelId=z.object({channelId:z.string()}).parse(raw).channelId; const user=auth(socket); const spaceId=channelSpaceId(channelId);if(!spaceId)throw new Error('频道不存在');spaceMembers(user.id,spaceId);for (const room of socket.rooms) if(room.startsWith('channel:')) socket.leave(room); socket.join(`channel:${channelId}`); ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('voice:credentials', async (raw, ack: Ack) => { try {
     const user=auth(socket);
