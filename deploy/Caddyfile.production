@@ -41,6 +41,11 @@ https://{$NIZ_PUBLIC_IP} {
   handle /poio/ {
     redir * /poio/download/ permanent
   }
+  # Existing Windows clients still check this legacy endpoint. Keep the URL
+  # working, but move every release byte to the ModelScope CDN.
+  handle_path /poio/releases/* {
+    redir https://www.modelscope.cn/models/sjw712/POIO/resolve/master{uri} temporary
+  }
   handle_path /poio/* {
     reverse_proxy 127.0.0.1:17920
   }

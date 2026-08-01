@@ -440,7 +440,7 @@ function initializeAutoUpdates() {
   autoUpdater.autoDownload=false;
   autoUpdater.autoInstallOnAppQuit=true;
   autoUpdater.allowPrerelease=false;
-  autoUpdater.setFeedURL({provider:'generic',url:'https://115.159.222.29/poio/releases/'});
+  autoUpdater.setFeedURL({provider:'generic',url:'https://www.modelscope.cn/models/sjw712/POIO/resolve/master/'});
   autoUpdater.on('checking-for-update',()=>publishUpdateStatus({state:'checking'}));
   autoUpdater.on('update-available',info=>publishUpdateStatus({state:'available',version:info.version,notes:releaseNotesText(info.releaseNotes)}));
   autoUpdater.on('update-not-available',info=>publishUpdateStatus({state:'up-to-date',version:info.version}));
