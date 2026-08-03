@@ -1,6 +1,6 @@
-POIO 0.8.3 修复 macOS Apple Silicon 客户端的首发问题。
+POIO 0.8.4 完善未签名 macOS 客户端的在线更新流程。
 
-- 修复主界面已加载但启动动画窗口不自动关闭的问题。
-- 修复 macOS Mumble 原生控制接口未导出，导致加入语音频道失败的问题。
-- 补齐 ModelScope 在线更新所需的 latest-mac.yml 与 ZIP 更新包。
-- 增加 macOS 构建阶段的原生符号校验，防止同类问题再次进入安装包。
+- 软件内继续从 ModelScope 检查新版本并显示下载进度。
+- macOS 下载 DMG 后会校验 SHA-512，再通过“打开 DMG”引导覆盖安装。
+- 不再调用未签名应用无法使用的 Squirrel.Mac 静默安装流程。
+- 包含 0.8.3 的启动动画关闭和 Mumble 原生语音连接修复。

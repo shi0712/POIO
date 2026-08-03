@@ -1,7 +1,8 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, screen, session, shell, Tray } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, net as electronNet, screen, session, shell, Tray } from 'electron';
 import electronUpdater from 'electron-updater';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -41,15 +42,19 @@ type MumbleRuntimeState = { state:'disconnected'|'connecting'|'connected'|'recon
 type MumbleAudioDevice = { index:number;name:string;selected:boolean };
 type MumbleAudioDevices = { inputBackend?:string;outputBackend?:string;inputs:MumbleAudioDevice[];outputs:MumbleAudioDevice[] };
 type MumbleUserVolume = { username:string;volume:number;talking:boolean };
-type AppUpdateStatus = { state:'idle'|'checking'|'available'|'downloading'|'downloaded'|'up-to-date'|'error'|'development';version?:string;percent?:number;message?:string;notes?:string };
+type AppUpdateStatus = { state:'idle'|'checking'|'available'|'downloading'|'downloaded'|'up-to-date'|'error'|'development';version?:string;percent?:number;message?:string;notes?:string;installMode?:'restart'|'open-dmg' };
+type MacUpdateFile = { url:string;sha512:string;size?:number };
 type VoiceShortcut = { virtualKey:number;modifiers:number;label:string };
 type DesktopPreferences = { closeToTray:boolean;launchAtLogin:boolean;muteShortcut:VoiceShortcut;pushToTalkEnabled:boolean;pushToTalkShortcut:VoiceShortcut };
 type StoredDesktopPreferences = { closeToTray:boolean;trayHintShown:boolean;muteShortcut:VoiceShortcut;pushToTalkEnabled:boolean;pushToTalkShortcut:VoiceShortcut };
 const defaultMuteShortcut:VoiceShortcut={virtualKey:77,modifiers:3,label:'Ctrl + Shift + M'};
 const defaultPushToTalkShortcut:VoiceShortcut={virtualKey:86,modifiers:0,label:'V'};
 let appUpdateStatus:AppUpdateStatus={state:'idle'};
+let pendingMacUpdate:{version:string;file:MacUpdateFile}|undefined;
+let downloadedMacDmgPath:string|undefined;
 let mumbleRuntimeState:MumbleRuntimeState={state:'disconnected'};
 let lastAppUpdateCheck=0;
+const appUpdateFeedUrl='https://www.modelscope.cn/models/sjw712/POIO/resolve/master/';
 let desktopPreferences:StoredDesktopPreferences={closeToTray:true,trayHintShown:false,muteShortcut:defaultMuteShortcut,pushToTalkEnabled:false,pushToTalkShortcut:defaultPushToTalkShortcut};
 
 function sendToMainWindow(channel:string,value:unknown) {
@@ -432,8 +437,110 @@ async function checkForAppUpdate() {
   try{await autoUpdater.checkForUpdates();return appUpdateStatus}catch(error){return publishUpdateStatus({state:'error',message:error instanceof Error?error.message:'检查更新失败'})}
 }
 
+function removeUpdateFile(file:string) {
+  try{if(existsSync(file))unlinkSync(file)}catch{}
+}
+
+function downloadMacUpdateFile(url:string,destination:string,expectedSha512:string,expectedSize:number|undefined,onProgress:(percent:number)=>void) {
+  return new Promise<void>((resolve,reject)=>{
+    const temporary=`${destination}.part`;
+    removeUpdateFile(temporary);
+    let settled=false;
+    let received=0;
+    let lastPercent=-1;
+    const hash=createHash('sha512');
+    const fail=(error:Error)=>{
+      if(settled)return;
+      settled=true;
+      removeUpdateFile(temporary);
+      reject(error);
+    };
+    const request=electronNet.request({method:'GET',url,redirect:'follow'});
+    request.once('error',fail);
+    request.once('response',response=>{
+      const status=response.statusCode;
+      if(status<200||status>=300){
+        response.on('data',()=>undefined);
+        fail(new Error(`macOS 更新包下载失败：HTTP ${status}`));
+        return;
+      }
+      const output=createWriteStream(temporary,{flags:'w'});
+      output.once('error',fail);
+      response.once('error',fail);
+      response.once('aborted',()=>fail(new Error('macOS 更新包下载被中断')));
+      response.on('data',(chunk:Buffer)=>{
+        if(settled)return;
+        received+=chunk.length;
+        hash.update(chunk);
+        output.write(chunk);
+        if(expectedSize){
+          const percent=Math.min(99,Math.floor(received*100/expectedSize));
+          if(percent!==lastPercent){lastPercent=percent;onProgress(percent)}
+        }
+      });
+      response.once('end',()=>output.end());
+      output.once('finish',()=>{
+        if(settled)return;
+        const digest=hash.digest('base64');
+        if(expectedSize!==undefined&&received!==expectedSize){
+          fail(new Error(`macOS 更新包大小不匹配：${received}/${expectedSize}`));
+          return;
+        }
+        if(digest!==expectedSha512){
+          fail(new Error('macOS 更新包校验失败，请重新下载'));
+          return;
+        }
+        try{
+          removeUpdateFile(destination);
+          renameSync(temporary,destination);
+        }catch(error){
+          fail(error instanceof Error?error:new Error(String(error)));
+          return;
+        }
+        settled=true;
+        onProgress(100);
+        resolve();
+      });
+    });
+    request.end();
+  });
+}
+
+async function downloadMacDmgUpdate() {
+  if(appUpdateStatus.state==='downloaded'||appUpdateStatus.state==='downloading')return appUpdateStatus;
+  if(appUpdateStatus.state!=='available'){
+    const checked=await checkForAppUpdate();
+    if(checked.state!=='available')return checked;
+  }
+  const pending=pendingMacUpdate;
+  if(!pending)return publishUpdateStatus({...appUpdateStatus,state:'error',message:'macOS 更新元数据缺少 DMG 文件'});
+  const updateDirectory=path.join(app.getPath('userData'),'updates');
+  mkdirSync(updateDirectory,{recursive:true});
+  const safeVersion=pending.version.replace(/[^0-9A-Za-z.-]/g,'');
+  const destination=path.join(updateDirectory,`POIO-${safeVersion||'update'}-mac-arm64.dmg`);
+  const downloadUrl=new URL(pending.file.url,appUpdateFeedUrl).toString();
+  const status:AppUpdateStatus={...appUpdateStatus,state:'downloading',percent:0,installMode:'open-dmg'};
+  publishUpdateStatus(status);
+  try{
+    await downloadMacUpdateFile(downloadUrl,destination,pending.file.sha512,pending.file.size,percent=>publishUpdateStatus({...status,state:'downloading',percent}));
+    downloadedMacDmgPath=destination;
+    return publishUpdateStatus({...status,state:'downloaded',percent:100,message:'DMG 已下载并校验完成',installMode:'open-dmg'});
+  }catch(error){
+    return publishUpdateStatus({...status,state:'error',message:error instanceof Error?error.message:'macOS 更新包下载失败'});
+  }
+}
+
+async function installDownloadedMacUpdate() {
+  const file=downloadedMacDmgPath;
+  if(!file||!existsSync(file))return publishUpdateStatus({...appUpdateStatus,state:'error',message:'找不到已下载的 DMG，请重新下载'});
+  const error=await shell.openPath(file);
+  if(error)return publishUpdateStatus({...appUpdateStatus,state:'error',message:`无法打开 DMG：${error}`});
+  return publishUpdateStatus({...appUpdateStatus,state:'downloaded',message:'DMG 已打开，请将 POIO 拖入“应用程序”以覆盖旧版本',installMode:'open-dmg'});
+}
+
 async function downloadAppUpdate() {
   if(!app.isPackaged)return publishUpdateStatus({state:'development',message:'开发模式不下载更新'});
+  if(process.platform==='darwin')return downloadMacDmgUpdate();
   if(appUpdateStatus.state==='downloaded'||appUpdateStatus.state==='downloading')return appUpdateStatus;
   if(appUpdateStatus.state!=='available'){
     const checked=await checkForAppUpdate();
@@ -447,11 +554,18 @@ async function downloadAppUpdate() {
 function initializeAutoUpdates() {
   if(!app.isPackaged){publishUpdateStatus({state:'development',message:'开发模式不检查更新'});return}
   autoUpdater.autoDownload=false;
-  autoUpdater.autoInstallOnAppQuit=true;
+  autoUpdater.autoInstallOnAppQuit=process.platform!=='darwin';
   autoUpdater.allowPrerelease=false;
-  autoUpdater.setFeedURL({provider:'generic',url:'https://www.modelscope.cn/models/sjw712/POIO/resolve/master/'});
+  autoUpdater.setFeedURL({provider:'generic',url:appUpdateFeedUrl});
   autoUpdater.on('checking-for-update',()=>publishUpdateStatus({state:'checking'}));
-  autoUpdater.on('update-available',info=>publishUpdateStatus({state:'available',version:info.version,notes:releaseNotesText(info.releaseNotes)}));
+  autoUpdater.on('update-available',info=>{
+    if(process.platform==='darwin'){
+      const file=info.files.find(candidate=>candidate.url.toLowerCase().split(/[?#]/)[0].endsWith('.dmg'));
+      pendingMacUpdate=file?{version:info.version,file:{url:file.url,sha512:file.sha512,size:file.size}}:undefined;
+      downloadedMacDmgPath=undefined;
+    }
+    publishUpdateStatus({state:'available',version:info.version,notes:releaseNotesText(info.releaseNotes),installMode:process.platform==='darwin'?'open-dmg':'restart'});
+  });
   autoUpdater.on('update-not-available',info=>publishUpdateStatus({state:'up-to-date',version:info.version}));
   autoUpdater.on('download-progress',progress=>publishUpdateStatus({...appUpdateStatus,state:'downloading',percent:Math.round(progress.percent)}));
   autoUpdater.on('update-downloaded',info=>publishUpdateStatus({state:'downloaded',version:info.version,percent:100,notes:releaseNotesText(info.releaseNotes)??appUpdateStatus.notes}));
@@ -781,7 +895,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('update:status', () => appUpdateStatus);
   ipcMain.handle('update:check', () => checkForAppUpdate());
   ipcMain.handle('update:download', () => downloadAppUpdate());
-  ipcMain.handle('update:install', () => { if(appUpdateStatus.state==='downloaded')autoUpdater.quitAndInstall(false,true); });
+  ipcMain.handle('update:install', async() => {
+    if(appUpdateStatus.state!=='downloaded')return appUpdateStatus;
+    if(process.platform==='darwin')return installDownloadedMacUpdate();
+    autoUpdater.quitAndInstall(false,true);
+    return appUpdateStatus;
+  });
   ipcMain.handle('diagnostics:get', () => buildDiagnostics());
   await createMainWindow();
   initializeAutoUpdates();
