@@ -1,8 +1,11 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, net as electronNet, screen, session, shell, Tray } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, screen, session, shell, Tray } from 'electron';
 import electronUpdater from 'electron-updater';
+import { load as parseYaml } from 'js-yaml';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import type { IncomingMessage } from 'node:http';
+import https from 'node:https';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -44,6 +47,7 @@ type MumbleAudioDevices = { inputBackend?:string;outputBackend?:string;inputs:Mu
 type MumbleUserVolume = { username:string;volume:number;talking:boolean };
 type AppUpdateStatus = { state:'idle'|'checking'|'available'|'downloading'|'downloaded'|'up-to-date'|'error'|'development';version?:string;percent?:number;message?:string;notes?:string;installMode?:'restart'|'open-dmg' };
 type MacUpdateFile = { url:string;sha512:string;size?:number };
+type MacUpdateManifest = { version?:unknown;files?:unknown;releaseNotes?:unknown };
 type VoiceShortcut = { virtualKey:number;modifiers:number;label:string };
 type DesktopPreferences = { closeToTray:boolean;launchAtLogin:boolean;muteShortcut:VoiceShortcut;pushToTalkEnabled:boolean;pushToTalkShortcut:VoiceShortcut };
 type StoredDesktopPreferences = { closeToTray:boolean;trayHintShown:boolean;muteShortcut:VoiceShortcut;pushToTalkEnabled:boolean;pushToTalkShortcut:VoiceShortcut };
@@ -55,6 +59,10 @@ let downloadedMacDmgPath:string|undefined;
 let mumbleRuntimeState:MumbleRuntimeState={state:'disconnected'};
 let lastAppUpdateCheck=0;
 const appUpdateFeedUrl='https://www.modelscope.cn/models/sjw712/POIO/resolve/master/';
+const macUpdateManifestUrls=[
+  `${appUpdateFeedUrl}latest-mac.yml`,
+  'https://github.com/shi0712/POIO/releases/latest/download/latest-mac.yml',
+];
 let desktopPreferences:StoredDesktopPreferences={closeToTray:true,trayHintShown:false,muteShortcut:defaultMuteShortcut,pushToTalkEnabled:false,pushToTalkShortcut:defaultPushToTalkShortcut};
 
 function sendToMainWindow(channel:string,value:unknown) {
@@ -430,10 +438,104 @@ function releaseNotesText(value:unknown) {
   return undefined;
 }
 
+function openHttpsResponse(value:string,redirects=5):Promise<IncomingMessage> {
+  return new Promise((resolve,reject)=>{
+    let url:URL;
+    try{url=new URL(value)}catch{return reject(new Error('更新地址无效'))}
+    if(url.protocol!=='https:')return reject(new Error('更新服务必须使用 HTTPS'));
+    const request=https.get(url,{
+      headers:{
+        Accept:'application/octet-stream, text/yaml, text/plain, */*',
+        'Cache-Control':'no-cache',
+        'User-Agent':`POIO/${app.getVersion()} (${process.platform}; ${process.arch})`,
+      },
+    },response=>{
+      const status=response.statusCode??0;
+      const location=response.headers.location;
+      if(status>=300&&status<400&&location){
+        response.resume();
+        if(redirects<=0){reject(new Error('更新服务重定向次数过多'));return}
+        openHttpsResponse(new URL(location,url).toString(),redirects-1).then(resolve,reject);
+        return;
+      }
+      if(status<200||status>=300){
+        response.resume();
+        reject(new Error(`更新服务返回 HTTP ${status}`));
+        return;
+      }
+      response.setTimeout(30_000,()=>response.destroy(new Error('更新服务响应超时')));
+      resolve(response);
+    });
+    request.setTimeout(20_000,()=>request.destroy(new Error('连接更新服务超时')));
+    request.once('error',reject);
+  });
+}
+
+async function readHttpsText(url:string) {
+  const response=await openHttpsResponse(url);
+  const chunks:Buffer[]=[];
+  let size=0;
+  for await(const value of response){
+    const chunk=Buffer.isBuffer(value)?value:Buffer.from(value);
+    size+=chunk.length;
+    if(size>1024*1024)throw new Error('更新元数据过大');
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+function isNewerVersion(candidate:string,current:string) {
+  const parse=(value:string)=>value.split('-')[0].split('.').map(part=>Number.parseInt(part,10));
+  const next=parse(candidate);
+  const installed=parse(current);
+  if(next.some(Number.isNaN)||installed.some(Number.isNaN))return candidate!==current;
+  for(let index=0;index<Math.max(next.length,installed.length);index++){
+    const difference=(next[index]??0)-(installed[index]??0);
+    if(difference!==0)return difference>0;
+  }
+  return false;
+}
+
+async function checkForMacAppUpdate() {
+  let manifest:MacUpdateManifest|undefined;
+  let lastError:unknown;
+  for(const url of macUpdateManifestUrls){
+    try{
+      manifest=parseYaml(await readHttpsText(`${url}?noCache=${Date.now().toString(36)}`)) as MacUpdateManifest;
+      break;
+    }catch(error){lastError=error}
+  }
+  if(!manifest)throw lastError instanceof Error?lastError:new Error('无法连接更新服务');
+  const version=typeof manifest.version==='string'?manifest.version.trim():'';
+  const files=Array.isArray(manifest.files)?manifest.files:[];
+  const dmg=files.find(file=>{
+    if(!file||typeof file!=='object'||!('url' in file))return false;
+    return String(file.url).toLowerCase().split(/[?#]/)[0].endsWith('.dmg');
+  }) as {url?:unknown;sha512?:unknown;size?:unknown}|undefined;
+  if(!version||!dmg||typeof dmg.url!=='string'||typeof dmg.sha512!=='string')throw new Error('更新元数据缺少 macOS DMG 信息');
+  if(!isNewerVersion(version,app.getVersion())){
+    pendingMacUpdate=undefined;
+    return publishUpdateStatus({state:'up-to-date',version:app.getVersion()});
+  }
+  pendingMacUpdate={
+    version,
+    file:{
+      url:new URL(dmg.url,appUpdateFeedUrl).toString(),
+      sha512:dmg.sha512,
+      size:typeof dmg.size==='number'?dmg.size:undefined,
+    },
+  };
+  downloadedMacDmgPath=undefined;
+  return publishUpdateStatus({state:'available',version,notes:releaseNotesText(manifest.releaseNotes),installMode:'open-dmg'});
+}
+
 async function checkForAppUpdate() {
   lastAppUpdateCheck=Date.now();
   if(!app.isPackaged)return publishUpdateStatus({state:'development',message:'开发模式不检查更新'});
   publishUpdateStatus({state:'checking'});
+  if(process.platform==='darwin'){
+    try{return await checkForMacAppUpdate()}catch(error){return publishUpdateStatus({state:'error',message:error instanceof Error?error.message:'检查更新失败'})}
+  }
   try{await autoUpdater.checkForUpdates();return appUpdateStatus}catch(error){return publishUpdateStatus({state:'error',message:error instanceof Error?error.message:'检查更新失败'})}
 }
 
@@ -441,68 +543,60 @@ function removeUpdateFile(file:string) {
   try{if(existsSync(file))unlinkSync(file)}catch{}
 }
 
-function downloadMacUpdateFile(url:string,destination:string,expectedSha512:string,expectedSize:number|undefined,onProgress:(percent:number)=>void) {
+async function downloadMacUpdateFileWithNode(url:string,destination:string,expectedSha512:string,expectedSize:number|undefined,onProgress:(percent:number)=>void) {
+  const temporary=`${destination}.part`;
+  removeUpdateFile(temporary);
+  const response=await openHttpsResponse(url);
   return new Promise<void>((resolve,reject)=>{
-    const temporary=`${destination}.part`;
-    removeUpdateFile(temporary);
     let settled=false;
     let received=0;
     let lastPercent=-1;
     const hash=createHash('sha512');
+    const output=createWriteStream(temporary,{flags:'w'});
     const fail=(error:Error)=>{
       if(settled)return;
       settled=true;
+      response.destroy();
+      output.destroy();
       removeUpdateFile(temporary);
       reject(error);
     };
-    const request=electronNet.request({method:'GET',url,redirect:'follow'});
-    request.once('error',fail);
-    request.once('response',response=>{
-      const status=response.statusCode;
-      if(status<200||status>=300){
-        response.on('data',()=>undefined);
-        fail(new Error(`macOS 更新包下载失败：HTTP ${status}`));
+    output.once('error',fail);
+    response.once('error',fail);
+    response.once('aborted',()=>fail(new Error('macOS 更新包下载被中断')));
+    response.on('data',(chunk:Buffer)=>{
+      if(settled)return;
+      received+=chunk.length;
+      hash.update(chunk);
+      if(!output.write(chunk)){response.pause();output.once('drain',()=>response.resume())}
+      if(expectedSize){
+        const percent=Math.min(99,Math.floor(received*100/expectedSize));
+        if(percent!==lastPercent){lastPercent=percent;onProgress(percent)}
+      }
+    });
+    response.once('end',()=>output.end());
+    output.once('finish',()=>{
+      if(settled)return;
+      const digest=hash.digest('base64');
+      if(expectedSize!==undefined&&received!==expectedSize){
+        fail(new Error(`macOS 更新包大小不匹配：${received}/${expectedSize}`));
         return;
       }
-      const output=createWriteStream(temporary,{flags:'w'});
-      output.once('error',fail);
-      response.once('error',fail);
-      response.once('aborted',()=>fail(new Error('macOS 更新包下载被中断')));
-      response.on('data',(chunk:Buffer)=>{
-        if(settled)return;
-        received+=chunk.length;
-        hash.update(chunk);
-        output.write(chunk);
-        if(expectedSize){
-          const percent=Math.min(99,Math.floor(received*100/expectedSize));
-          if(percent!==lastPercent){lastPercent=percent;onProgress(percent)}
-        }
-      });
-      response.once('end',()=>output.end());
-      output.once('finish',()=>{
-        if(settled)return;
-        const digest=hash.digest('base64');
-        if(expectedSize!==undefined&&received!==expectedSize){
-          fail(new Error(`macOS 更新包大小不匹配：${received}/${expectedSize}`));
-          return;
-        }
-        if(digest!==expectedSha512){
-          fail(new Error('macOS 更新包校验失败，请重新下载'));
-          return;
-        }
-        try{
-          removeUpdateFile(destination);
-          renameSync(temporary,destination);
-        }catch(error){
-          fail(error instanceof Error?error:new Error(String(error)));
-          return;
-        }
-        settled=true;
-        onProgress(100);
-        resolve();
-      });
+      if(digest!==expectedSha512){
+        fail(new Error('macOS 更新包校验失败，请重新下载'));
+        return;
+      }
+      try{
+        removeUpdateFile(destination);
+        renameSync(temporary,destination);
+      }catch(error){
+        fail(error instanceof Error?error:new Error(String(error)));
+        return;
+      }
+      settled=true;
+      onProgress(100);
+      resolve();
     });
-    request.end();
   });
 }
 
@@ -519,10 +613,21 @@ async function downloadMacDmgUpdate() {
   const safeVersion=pending.version.replace(/[^0-9A-Za-z.-]/g,'');
   const destination=path.join(updateDirectory,`POIO-${safeVersion||'update'}-mac-arm64.dmg`);
   const downloadUrl=new URL(pending.file.url,appUpdateFeedUrl).toString();
+  const githubFallback=`https://github.com/shi0712/POIO/releases/download/v${encodeURIComponent(pending.version)}/POIO-${encodeURIComponent(pending.version)}-mac-arm64.dmg`;
+  const downloadUrls=[...new Set([downloadUrl,githubFallback])];
   const status:AppUpdateStatus={...appUpdateStatus,state:'downloading',percent:0,installMode:'open-dmg'};
   publishUpdateStatus(status);
   try{
-    await downloadMacUpdateFile(downloadUrl,destination,pending.file.sha512,pending.file.size,percent=>publishUpdateStatus({...status,state:'downloading',percent}));
+    let downloaded=false;
+    let lastError:unknown;
+    for(const candidate of downloadUrls){
+      try{
+        await downloadMacUpdateFileWithNode(candidate,destination,pending.file.sha512,pending.file.size,percent=>publishUpdateStatus({...status,state:'downloading',percent}));
+        downloaded=true;
+        break;
+      }catch(error){lastError=error}
+    }
+    if(!downloaded)throw lastError instanceof Error?lastError:new Error('无法连接更新下载服务');
     downloadedMacDmgPath=destination;
     return publishUpdateStatus({...status,state:'downloaded',percent:100,message:'DMG 已下载并校验完成',installMode:'open-dmg'});
   }catch(error){
