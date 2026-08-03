@@ -11,7 +11,8 @@
     "build": "npm run build -w @echodeck/server && npm run build -w @echodeck/desktop && npm run build -w @poio/web",
     "build:web": "npm run build -w @poio/web",
     "test": "npm run test -w @echodeck/server && npm run test -w @echodeck/desktop && npm run test -w @poio/web",
-    "dist:win": "npm run dist:win -w @echodeck/desktop"
+    "dist:win": "npm run dist:win -w @echodeck/desktop",
+    "dist:mac": "npm run dist:mac -w @echodeck/desktop"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

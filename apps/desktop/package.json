@@ -12,7 +12,8 @@
     "build": "vite build && tsc -p tsconfig.electron.json",
     "test": "tsc --noEmit -p tsconfig.json",
     "native:share": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../native/share-core/scripts/stage-desktop.ps1",
-    "dist:win": "npm run native:share && npm run build && electron-builder --win nsis"
+    "dist:win": "npm run native:share && npm run build && electron-builder --win nsis",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip --arm64 --config electron-builder.mac.yml"
   },
   "dependencies": {
     "electron-updater": "^6.6.2",

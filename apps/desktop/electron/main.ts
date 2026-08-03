@@ -32,7 +32,9 @@ const nativeShare = new NativeShareSidecar(
   message => sendToMainWindow('native-share:message', message),
 );
 const mumblePipeSuffix = process.pid.toString(36);
-const mumblePipe = `${String.raw`\\.\pipe\EchoDeckMumble`}-${mumblePipeSuffix}`;
+const mumblePipe = process.platform === 'darwin'
+  ? `/tmp/poio-mumble-${mumblePipeSuffix}.sock`
+  : `${String.raw`\\.\pipe\EchoDeckMumble`}-${mumblePipeSuffix}`;
 
 type MumbleConnection = { host:string;port:number;username:string;password:string;channelName:string };
 type MumbleRuntimeState = { state:'disconnected'|'connecting'|'connected'|'reconnecting'|'error';attempt?:number;message?:string };
@@ -81,7 +83,14 @@ function queueInviteCode(code:string|undefined) {
 }
 
 function sidecarDirectory() {
-  return app.isPackaged ? path.join(process.resourcesPath, 'mumble') : path.join(dirname, '../resources/mumble');
+  if(app.isPackaged)return path.join(process.resourcesPath,'mumble');
+  return path.join(dirname,process.platform==='darwin'?'../resources/mumble-macos':'../resources/mumble');
+}
+
+function sidecarExecutable(directory:string) {
+  return process.platform==='darwin'
+    ? path.join(directory,'Mumble.app','Contents','MacOS','mumble')
+    : path.join(directory,'mumble.exe');
 }
 
 function publishMumbleState(state:MumbleRuntimeState) {
@@ -270,7 +279,7 @@ async function connectMumble(connection:MumbleConnection,recovering=false) {
     publishMumbleState({state:'connecting',message:'正在切换语音频道'});
   }
   stopMumble(false);
-  const directory=sidecarDirectory(); const executable=path.join(directory,'mumble.exe');
+  const directory=sidecarDirectory(); const executable=sidecarExecutable(directory);
   if(!existsSync(executable))throw new Error('安装包缺少 Mumble 原生音频核心');
   const configDirectory=path.join(app.getPath('userData'),'mumble-native');
   mkdirSync(configDirectory,{recursive:true});

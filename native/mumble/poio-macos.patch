@@ -1,0 +1,479 @@
+diff --git a/plugins/echodeckBridge/echodeckBridge.cpp b/plugins/echodeckBridge/echodeckBridge.cpp
+index fdd6e028..bed374d8 100644
+--- a/plugins/echodeckBridge/echodeckBridge.cpp
++++ b/plugins/echodeckBridge/echodeckBridge.cpp
+@@ -1,5 +1,5 @@
+ // EchoDeck control bridge for the native Mumble client.
+-// Uses Mumble's plugin API and a local Windows named pipe. No network listener is created.
++// Uses Mumble's plugin API and local IPC. No network listener is created.
+ #include "../MumblePlugin.h"
+ 
+ #include <atomic>
+@@ -10,6 +10,13 @@
+ 
+ #ifdef OS_WINDOWS
+ #	include <windows.h>
++#elif defined(OS_MACOS)
++#	include <dlfcn.h>
++#	include <sys/socket.h>
++#	include <sys/stat.h>
++#	include <sys/un.h>
++#	include <unistd.h>
++#	include <cstdlib>
+ #endif
+ 
+ namespace {
+@@ -47,6 +54,22 @@ std::wstring pipeName() {
+ 	}
+ 	return name;
+ }
++#elif defined(OS_MACOS)
++std::string pipeName() {
++	const char *suffix = std::getenv("POIO_MUMBLE_PIPE_SUFFIX");
++	std::string result = "/tmp/poio-mumble";
++	if (suffix && *suffix) {
++		std::string value(suffix);
++		const bool valid = value.size() < 64
++			&& value.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
++				== std::string::npos;
++		if (valid) {
++			result += "-" + value;
++		}
++	}
++	return result + ".sock";
++}
++#endif
+ 
+ using GetAudioDevicesFn = const char *(*)();
+ using SetAudioDeviceFn  = int (*)(int, int);
+@@ -61,118 +84,82 @@ using ConfigureRuntimeFn = int (*)();
+ using ConfigureHotkeysFn = int (*)(int);
+ using SetPushToTalkFn = int (*)(int);
+ 
++template< typename Function > Function resolveExecutableSymbol(const char *name) {
++#ifdef OS_WINDOWS
++	const HMODULE executable = GetModuleHandleW(nullptr);
++	return executable ? reinterpret_cast< Function >(GetProcAddress(executable, name)) : nullptr;
++#elif defined(OS_MACOS)
++	return reinterpret_cast< Function >(dlsym(RTLD_DEFAULT, name));
++#else
++	(void) name;
++	return nullptr;
++#endif
++}
++
+ GetAudioDevicesFn getAudioDevicesFunction() {
+-	static GetAudioDevicesFn function = []() {
+-		const HMODULE executable = GetModuleHandleW(nullptr);
+-		return executable ? reinterpret_cast< GetAudioDevicesFn >(GetProcAddress(executable, "EchoDeck_GetAudioDevices"))
+-						  : nullptr;
+-	}();
++	static GetAudioDevicesFn function = resolveExecutableSymbol< GetAudioDevicesFn >("EchoDeck_GetAudioDevices");
+ 	return function;
+ }
+ 
+ SetAudioDeviceFn setAudioDeviceFunction() {
+-	static SetAudioDeviceFn function = []() {
+-		const HMODULE executable = GetModuleHandleW(nullptr);
+-		return executable ? reinterpret_cast< SetAudioDeviceFn >(GetProcAddress(executable, "EchoDeck_SetAudioDevice"))
+-						  : nullptr;
+-	}();
++	static SetAudioDeviceFn function = resolveExecutableSymbol< SetAudioDeviceFn >("EchoDeck_SetAudioDevice");
+ 	return function;
+ }
+ 
+ GetInputLevelFn getInputLevelFunction() {
+-	static GetInputLevelFn function = []() {
+-		const HMODULE executable = GetModuleHandleW(nullptr);
+-		return executable ? reinterpret_cast< GetInputLevelFn >(GetProcAddress(executable, "EchoDeck_GetInputLevel"))
+-						  : nullptr;
+-	}();
++	static GetInputLevelFn function = resolveExecutableSymbol< GetInputLevelFn >("EchoDeck_GetInputLevel");
+ 	return function;
+ }
+ 
+ IsTransmittingFn isTransmittingFunction() {
+-	static IsTransmittingFn function = []() {
+-		const HMODULE executable = GetModuleHandleW(nullptr);
+-		return executable
+-				   ? reinterpret_cast< IsTransmittingFn >(GetProcAddress(executable, "EchoDeck_IsTransmitting"))
+-				   : nullptr;
+-	}();
++	static IsTransmittingFn function = resolveExecutableSymbol< IsTransmittingFn >("EchoDeck_IsTransmitting");
+ 	return function;
+ }
+ 
+ IsPushToTalkActiveFn isPushToTalkActiveFunction() {
+-	static IsPushToTalkActiveFn function = []() {
+-		const HMODULE executable = GetModuleHandleW(nullptr);
+-		return executable
+-				   ? reinterpret_cast< IsPushToTalkActiveFn >(
+-						 GetProcAddress(executable, "EchoDeck_IsPushToTalkActive"))
+-				   : nullptr;
+-	}();
++	static IsPushToTalkActiveFn function =
++		resolveExecutableSymbol< IsPushToTalkActiveFn >("EchoDeck_IsPushToTalkActive");
+ 	return function;
+ }
+ 
+ GetVolumeFn getVolumeFunction() {
+-	static GetVolumeFn function = []() {
+-		const HMODULE executable = GetModuleHandleW(nullptr);
+-		return executable ? reinterpret_cast< GetVolumeFn >(GetProcAddress(executable, "EchoDeck_GetVolume")) : nullptr;
+-	}();
++	static GetVolumeFn function = resolveExecutableSymbol< GetVolumeFn >("EchoDeck_GetVolume");
+ 	return function;
+ }
+ 
+ SetVolumeFn setVolumeFunction() {
+-	static SetVolumeFn function = []() {
+-		const HMODULE executable = GetModuleHandleW(nullptr);
+-		return executable ? reinterpret_cast< SetVolumeFn >(GetProcAddress(executable, "EchoDeck_SetVolume")) : nullptr;
+-	}();
++	static SetVolumeFn function = resolveExecutableSymbol< SetVolumeFn >("EchoDeck_SetVolume");
+ 	return function;
+ }
+ 
+ GetUsersFn getUsersFunction() {
+-	static GetUsersFn function = []() {
+-		const HMODULE executable = GetModuleHandleW(nullptr);
+-		return executable ? reinterpret_cast< GetUsersFn >(GetProcAddress(executable, "EchoDeck_GetUsers")) : nullptr;
+-	}();
++	static GetUsersFn function = resolveExecutableSymbol< GetUsersFn >("EchoDeck_GetUsers");
+ 	return function;
+ }
+ 
+ SetUserVolumeFn setUserVolumeFunction() {
+-	static SetUserVolumeFn function = []() {
+-		const HMODULE executable = GetModuleHandleW(nullptr);
+-		return executable
+-				   ? reinterpret_cast< SetUserVolumeFn >(GetProcAddress(executable, "EchoDeck_SetUserVolume"))
+-				   : nullptr;
+-	}();
++	static SetUserVolumeFn function = resolveExecutableSymbol< SetUserVolumeFn >("EchoDeck_SetUserVolume");
+ 	return function;
+ }
+ 
+ ConfigureRuntimeFn configureRuntimeFunction() {
+-	static ConfigureRuntimeFn function = []() {
+-		const HMODULE executable = GetModuleHandleW(nullptr);
+-		return executable
+-				   ? reinterpret_cast< ConfigureRuntimeFn >(GetProcAddress(executable, "EchoDeck_ConfigureRuntime"))
+-				   : nullptr;
+-	}();
++	static ConfigureRuntimeFn function =
++		resolveExecutableSymbol< ConfigureRuntimeFn >("EchoDeck_ConfigureRuntime");
+ 	return function;
+ }
+ 
+ ConfigureHotkeysFn configureHotkeysFunction() {
+-	static ConfigureHotkeysFn function = []() {
+-		const HMODULE executable = GetModuleHandleW(nullptr);
+-		return executable
+-				   ? reinterpret_cast< ConfigureHotkeysFn >(GetProcAddress(executable, "EchoDeck_ConfigureHotkeys"))
+-				   : nullptr;
+-	}();
++	static ConfigureHotkeysFn function =
++		resolveExecutableSymbol< ConfigureHotkeysFn >("EchoDeck_ConfigureHotkeys");
+ 	return function;
+ }
+ 
+ SetPushToTalkFn setPushToTalkFunction() {
+-	static SetPushToTalkFn function = []() {
+-		const HMODULE executable = GetModuleHandleW(nullptr);
+-		return executable
+-				   ? reinterpret_cast< SetPushToTalkFn >(GetProcAddress(executable, "EchoDeck_SetPushToTalk"))
+-				   : nullptr;
+-	}();
++	static SetPushToTalkFn function = resolveExecutableSymbol< SetPushToTalkFn >("EchoDeck_SetPushToTalk");
+ 	return function;
+ }
+ 
++#ifdef OS_WINDOWS
+ bool modifierPressed(int modifier, int leftKey, int rightKey) {
+ 	return modifier == 0 || (GetAsyncKeyState(leftKey) & 0x8000) != 0
+ 		   || (GetAsyncKeyState(rightKey) & 0x8000) != 0;
+@@ -220,7 +207,7 @@ void runHotkeys() {
+ 		}
+ 	}
+ }
+-#endif
++#endif // OS_WINDOWS
+ 
+ MumbleStringWrapper staticString(const char *value) {
+ 	return { value, std::strlen(value), false };
+@@ -243,7 +230,7 @@ std::string executeCommand(const std::string &line) {
+ 		const auto connectionStatus = g_api.getActiveServerConnection(g_pluginID, &connection);
+ 		const auto muteStatus = g_api.isLocalUserMuted(g_pluginID, &muted);
+ 		const auto deafStatus = g_api.isLocalUserDeafened(g_pluginID, &deafened);
+-#ifdef OS_WINDOWS
++#if defined(OS_WINDOWS) || defined(OS_MACOS)
+ 		if (const auto function = isTransmittingFunction()) {
+ 			transmitting = function() == 1;
+ 		}
+@@ -263,7 +250,7 @@ std::string executeCommand(const std::string &line) {
+ 	if (line.rfind("DEAF ", 0) == 0) {
+ 		return statusName(g_api.requestLocalUserDeaf(g_pluginID, line.substr(5) == "1"));
+ 	}
+-#ifdef OS_WINDOWS
++#if defined(OS_WINDOWS) || defined(OS_MACOS)
+ 	if (line.rfind("HOTKEYS ", 0) == 0) {
+ 		int muteKey = 0;
+ 		int muteModifiers = 0;
+@@ -283,11 +270,13 @@ std::string executeCommand(const std::string &line) {
+ 		if (!function) {
+ 			return "ERROR native-hotkey-api-unavailable";
+ 		}
++#ifdef OS_WINDOWS
+ 		g_muteVirtualKey.store(muteKey);
+ 		g_muteModifiers.store(muteModifiers);
+ 		g_pushToTalkVirtualKey.store(pushToTalkKey);
+ 		g_pushToTalkModifiers.store(pushToTalkModifiers);
+ 		g_pushToTalkEnabled.store(pushToTalkEnabled == 1);
++#endif
+ 		const int result = function(pushToTalkEnabled);
+ 		return result == 1 ? "OK" : "ERROR configure-hotkeys-" + std::to_string(result);
+ 	}
+@@ -428,14 +417,69 @@ void wakePipe() {
+ 		CloseHandle(pipe);
+ 	}
+ }
++#elif defined(OS_MACOS)
++void runPipe() {
++	const std::string controlPipe = pipeName();
++	::unlink(controlPipe.c_str());
++	const int listener = ::socket(AF_UNIX, SOCK_STREAM, 0);
++	if (listener < 0) {
++		return;
++	}
++	sockaddr_un address{};
++	address.sun_family = AF_UNIX;
++	std::strncpy(address.sun_path, controlPipe.c_str(), sizeof(address.sun_path) - 1);
++	if (::bind(listener, reinterpret_cast< sockaddr * >(&address), sizeof(address)) != 0
++		|| ::chmod(controlPipe.c_str(), S_IRUSR | S_IWUSR) != 0 || ::listen(listener, 4) != 0) {
++		::close(listener);
++		::unlink(controlPipe.c_str());
++		return;
++	}
++	while (g_running.load()) {
++		const int client = ::accept(listener, nullptr, nullptr);
++		if (client < 0) {
++			continue;
++		}
++		int noSigPipe = 1;
++		::setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe));
++		char buffer[65536]{};
++		const ssize_t bytesRead = ::recv(client, buffer, sizeof(buffer) - 1, 0);
++		if (bytesRead > 0 && g_running.load()) {
++			std::string command(buffer, static_cast< std::size_t >(bytesRead));
++			while (!command.empty()
++				   && (command.back() == '\r' || command.back() == '\n' || command.back() == '\0')) {
++				command.pop_back();
++			}
++			const std::string response = executeCommand(command) + "\n";
++			::send(client, response.data(), response.size(), 0);
++		}
++		::close(client);
++	}
++	::close(listener);
++	::unlink(controlPipe.c_str());
++}
++
++void wakePipe() {
++	const std::string controlPipe = pipeName();
++	const int client = ::socket(AF_UNIX, SOCK_STREAM, 0);
++	if (client < 0) {
++		return;
++	}
++	sockaddr_un address{};
++	address.sun_family = AF_UNIX;
++	std::strncpy(address.sun_path, controlPipe.c_str(), sizeof(address.sun_path) - 1);
++	::connect(client, reinterpret_cast< sockaddr * >(&address), sizeof(address));
++	::close(client);
++}
+ #endif
+ } // namespace
+ 
+ extern "C" MUMBLE_PLUGIN_EXPORT mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
+ 	g_pluginID = pluginID;
+ 	g_running.store(true);
+-#ifdef OS_WINDOWS
++#if defined(OS_WINDOWS) || defined(OS_MACOS)
+ 	g_pipeThread = std::thread(runPipe);
++#endif
++#ifdef OS_WINDOWS
+ 	g_hotkeyThread = std::thread(runHotkeys);
+ #endif
+ 	g_api.log(g_pluginID, "EchoDeck native control bridge initialized");
+@@ -444,11 +488,13 @@ extern "C" MUMBLE_PLUGIN_EXPORT mumble_error_t mumble_init(mumble_plugin_id_t pl
+ 
+ extern "C" MUMBLE_PLUGIN_EXPORT void mumble_shutdown() {
+ 	g_running.store(false);
+-#ifdef OS_WINDOWS
++#if defined(OS_WINDOWS) || defined(OS_MACOS)
+ 	wakePipe();
+ 	if (g_pipeThread.joinable()) {
+ 		g_pipeThread.join();
+ 	}
++#endif
++#ifdef OS_WINDOWS
+ 	if (g_hotkeyThread.joinable()) {
+ 		g_hotkeyThread.join();
+ 	}
+diff --git a/src/mumble/CMakeLists.txt b/src/mumble/CMakeLists.txt
+index d1e33078..bfb2b169 100644
+--- a/src/mumble/CMakeLists.txt
++++ b/src/mumble/CMakeLists.txt
+@@ -409,6 +409,13 @@ target_compile_definitions(mumble_client_object_lib
+ 
+ set_target_properties(mumble PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+ 
++# POIO's local-control plugin resolves a small, explicitly exported C API from
++# the Mumble executable on macOS. ENABLE_EXPORTS makes those symbols visible to
++# dlsym without changing the normal Windows build.
++if(APPLE)
++	set_target_properties(mumble PROPERTIES ENABLE_EXPORTS ON)
++endif()
++
+ set_target_properties(mumble_client_object_lib
+ 	PROPERTIES
+ 		AUTOMOC ON
+diff --git a/src/mumble/main.cpp b/src/mumble/main.cpp
+index 05366179..6eb91029 100644
+--- a/src/mumble/main.cpp
++++ b/src/mumble/main.cpp
+@@ -95,7 +95,12 @@ void throw_exception(std::exception const &) {
+ 
+ using namespace mumble;
+ 
+-#ifdef Q_OS_WIN
++#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
++#	ifdef Q_OS_WIN
++#		define POIO_NATIVE_EXPORT __declspec(dllexport)
++#	else
++#		define POIO_NATIVE_EXPORT __attribute__((visibility("default")))
++#	endif
+ namespace {
+ QByteArray echoDeckAudioDevicesJson() {
+ 	QJsonObject result;
+@@ -213,7 +218,7 @@ int echoDeckSetUserVolume(const QString &username, int value) {
+ }
+ } // namespace
+ 
+-extern "C" __declspec(dllexport) const char *EchoDeck_GetAudioDevices() {
++extern "C" POIO_NATIVE_EXPORT const char *EchoDeck_GetAudioDevices() {
+ 	static thread_local QByteArray response;
+ 	QByteArray value;
+ 	QCoreApplication *application = QCoreApplication::instance();
+@@ -231,7 +236,7 @@ extern "C" __declspec(dllexport) const char *EchoDeck_GetAudioDevices() {
+ 	return response.constData();
+ }
+ 
+-extern "C" __declspec(dllexport) int EchoDeck_SetAudioDevice(int kind, int index) {
++extern "C" POIO_NATIVE_EXPORT int EchoDeck_SetAudioDevice(int kind, int index) {
+ 	QCoreApplication *application = QCoreApplication::instance();
+ 	if (!application) {
+ 		return -40;
+@@ -244,7 +249,7 @@ extern "C" __declspec(dllexport) int EchoDeck_SetAudioDevice(int kind, int index
+ 	return invoked ? 1 : -41;
+ }
+ 
+-extern "C" __declspec(dllexport) int EchoDeck_GetInputLevel() {
++extern "C" POIO_NATIVE_EXPORT int EchoDeck_GetInputLevel() {
+ 	const auto audioInput = Global::get().ai;
+ 	if (!audioInput) {
+ 		return 0;
+@@ -253,16 +258,16 @@ extern "C" __declspec(dllexport) int EchoDeck_GetInputLevel() {
+ 	return static_cast< int >(normalized * 1000.0f);
+ }
+ 
+-extern "C" __declspec(dllexport) int EchoDeck_IsTransmitting() {
++extern "C" POIO_NATIVE_EXPORT int EchoDeck_IsTransmitting() {
+ 	const auto audioInput = Global::get().ai;
+ 	return audioInput && audioInput->isTransmitting() ? 1 : 0;
+ }
+ 
+-extern "C" __declspec(dllexport) int EchoDeck_IsPushToTalkActive() {
++extern "C" POIO_NATIVE_EXPORT int EchoDeck_IsPushToTalkActive() {
+ 	return Global::get().iPushToTalk > 0 ? 1 : 0;
+ }
+ 
+-extern "C" __declspec(dllexport) int EchoDeck_ConfigureRuntime() {
++extern "C" POIO_NATIVE_EXPORT int EchoDeck_ConfigureRuntime() {
+ 	QCoreApplication *application = QCoreApplication::instance();
+ 	if (!application) {
+ 		return -40;
+@@ -303,7 +308,7 @@ extern "C" __declspec(dllexport) int EchoDeck_ConfigureRuntime() {
+ 	return invoked ? 1 : -41;
+ }
+ 
+-extern "C" __declspec(dllexport) int EchoDeck_ConfigureHotkeys(int pushToTalkEnabled) {
++extern "C" POIO_NATIVE_EXPORT int EchoDeck_ConfigureHotkeys(int pushToTalkEnabled) {
+ 	QCoreApplication *application = QCoreApplication::instance();
+ 	if (!application) {
+ 		return -40;
+@@ -325,7 +330,7 @@ extern "C" __declspec(dllexport) int EchoDeck_ConfigureHotkeys(int pushToTalkEna
+ 	return invoked ? 1 : -41;
+ }
+ 
+-extern "C" __declspec(dllexport) int EchoDeck_SetPushToTalk(int down) {
++extern "C" POIO_NATIVE_EXPORT int EchoDeck_SetPushToTalk(int down) {
+ 	QCoreApplication *application = QCoreApplication::instance();
+ 	if (!application || !Global::get().mw) {
+ 		return -40;
+@@ -343,7 +348,7 @@ extern "C" __declspec(dllexport) int EchoDeck_SetPushToTalk(int down) {
+ 	return invoked ? 1 : -41;
+ }
+ 
+-extern "C" __declspec(dllexport) int EchoDeck_GetVolume(int kind) {
++extern "C" POIO_NATIVE_EXPORT int EchoDeck_GetVolume(int kind) {
+ 	if (kind == 0) {
+ 		return std::clamp(static_cast< int >(((20000 - Global::get().s.iMinLoudness) * 100.0f) / 19500.0f), 0,
+ 						  100);
+@@ -354,7 +359,7 @@ extern "C" __declspec(dllexport) int EchoDeck_GetVolume(int kind) {
+ 	return -1;
+ }
+ 
+-extern "C" __declspec(dllexport) int EchoDeck_SetVolume(int kind, int value) {
++extern "C" POIO_NATIVE_EXPORT int EchoDeck_SetVolume(int kind, int value) {
+ 	QCoreApplication *application = QCoreApplication::instance();
+ 	if (!application) {
+ 		return -40;
+@@ -382,7 +387,7 @@ extern "C" __declspec(dllexport) int EchoDeck_SetVolume(int kind, int value) {
+ 	return invoked && changed ? 1 : -41;
+ }
+ 
+-extern "C" __declspec(dllexport) const char *EchoDeck_GetUsers() {
++extern "C" POIO_NATIVE_EXPORT const char *EchoDeck_GetUsers() {
+ 	static thread_local QByteArray response;
+ 	QByteArray value;
+ 	QCoreApplication *application = QCoreApplication::instance();
+@@ -400,7 +405,7 @@ extern "C" __declspec(dllexport) const char *EchoDeck_GetUsers() {
+ 	return response.constData();
+ }
+ 
+-extern "C" __declspec(dllexport) int EchoDeck_SetUserVolume(const char *username, int value) {
++extern "C" POIO_NATIVE_EXPORT int EchoDeck_SetUserVolume(const char *username, int value) {
+ 	if (!username) {
+ 		return -1;
+ 	}
+@@ -418,6 +423,7 @@ extern "C" __declspec(dllexport) int EchoDeck_SetUserVolume(const char *username
+ 		Qt::BlockingQueuedConnection);
+ 	return invoked ? result : -41;
+ }
++#	undef POIO_NATIVE_EXPORT
+ #endif
+ 
+ extern void os_init();
+@@ -739,11 +745,7 @@ int main(int argc, char **argv) {
+ 
+ 	MumbleSSL::initialize();
+ 	CLIOptions options = parseCLI(argc, argv);
+-#ifdef Q_OS_WIN
+ 	const bool poioSidecar = qEnvironmentVariableIsSet("POIO_MUMBLE_PIPE_SUFFIX");
+-#else
+-	const bool poioSidecar = false;
+-#endif
+ 
+ 	if (options.quit) {
+ 		return options.exitCode;

@@ -1,0 +1,179 @@
+name: macOS arm64 DMG
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  MUMBLE_REF: a4c981afa8a58a8730270c1a4176d23ba5b14e9c
+  MUMBLE_ENVIRONMENT_SOURCE: https://github.com/mumble-voip/vcpkg/releases/download/2026-02
+  MUMBLE_ENVIRONMENT_VERSION: mumble_env.arm64-osx.b1fe4a4257
+  MUMBLE_VCPKG_TRIPLET: arm64-osx
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout POIO
+        uses: actions/checkout@v6
+
+      - name: Checkout pinned Mumble source
+        uses: actions/checkout@v6
+        with:
+          repository: mumble-voip/mumble
+          ref: ${{ env.MUMBLE_REF }}
+          path: mumble-src
+          submodules: recursive
+
+      - name: Verify Apple Silicon runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "arm64"
+          sw_vers
+
+      - name: Apply POIO native Mumble patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          for patch in \
+            native/mumble/poio-mumble.patch \
+            native/mumble/poio-global-hotkeys.patch \
+            native/mumble/poio-transmit-state.patch \
+            native/mumble/poio-sidecar-window.patch \
+            native/mumble/poio-macos.patch
+          do
+            git -C mumble-src apply "$GITHUB_WORKSPACE/$patch"
+          done
+          git -C mumble-src diff --check
+          test -f mumble-src/plugins/echodeckBridge/echodeckBridge.cpp
+
+      - name: Restore Mumble arm64 build environment
+        id: mumble-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/mumble-build-env
+          key: ${{ env.MUMBLE_ENVIRONMENT_VERSION }}
+
+      - name: Install Mumble build tools and dependencies
+        shell: bash
+        env:
+          MUMBLE_ENVIRONMENT_DIR: ${{ runner.temp }}/mumble-build-env
+        run: |
+          set -euo pipefail
+          brew install aria2 coreutils gnu-tar ninja xz
+          source mumble-src/.github/actions/install-dependencies/common.sh
+          verify_required_env_variables_set
+          make_build_env_available tar.xz
+          chmod +x "$MUMBLE_ENVIRONMENT_DIR/installed/$MUMBLE_VCPKG_TRIPLET/tools/Ice/slice2cpp"
+
+      - name: Configure native Mumble arm64 core
+        shell: bash
+        env:
+          MUMBLE_ENVIRONMENT_DIR: ${{ runner.temp }}/mumble-build-env
+        run: |
+          set -euo pipefail
+          cmake -S mumble-src -B mumble-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_UNITY_BUILD=ON \
+            -DCMAKE_TOOLCHAIN_FILE="$MUMBLE_ENVIRONMENT_DIR/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET="$MUMBLE_VCPKG_TRIPLET" \
+            -DIce_HOME="$MUMBLE_ENVIRONMENT_DIR/installed/$MUMBLE_VCPKG_TRIPLET" \
+            -Dclient=ON \
+            -Dserver=OFF \
+            -Dtests=OFF \
+            -Dplugins=ON \
+            -Doverlay=OFF \
+            -Dstatic=ON \
+            -Dbundled-spdlog=OFF \
+            -Dbundled-cli11=OFF \
+            -Dlto=OFF \
+            -Dwarnings-as-errors=OFF
+
+      - name: Build native Mumble arm64 core
+        shell: bash
+        run: cmake --build mumble-build --config Release --parallel 3
+
+      - name: Stage private Mumble sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x mumble-build/Mumble.app/Contents/MacOS/mumble
+          bridge="$(find mumble-build/plugins -maxdepth 1 -type f \( -iname '*echodeckBridge*.dylib' -o -iname '*echodeckBridge*.so' \) -print -quit)"
+          test -n "$bridge"
+          rm -rf apps/desktop/resources/mumble-macos
+          mkdir -p apps/desktop/resources/mumble-macos/Mumble.app/Contents/Plugins
+          ditto mumble-build/Mumble.app apps/desktop/resources/mumble-macos/Mumble.app
+          ditto "$bridge" "apps/desktop/resources/mumble-macos/Mumble.app/Contents/Plugins/$(basename "$bridge")"
+          /usr/libexec/PlistBuddy -c 'Add :LSUIElement bool true' apps/desktop/resources/mumble-macos/Mumble.app/Contents/Info.plist \
+            || /usr/libexec/PlistBuddy -c 'Set :LSUIElement true' apps/desktop/resources/mumble-macos/Mumble.app/Contents/Info.plist
+          file apps/desktop/resources/mumble-macos/Mumble.app/Contents/MacOS/mumble | tee /tmp/poio-mumble-file.txt
+          grep -q 'arm64' /tmp/poio-mumble-file.txt
+          file "apps/desktop/resources/mumble-macos/Mumble.app/Contents/Plugins/$(basename "$bridge")" | grep -q 'arm64'
+
+      - name: Generate macOS application icon
+        shell: bash
+        run: |
+          set -euo pipefail
+          iconset="apps/desktop/build/POIO.iconset"
+          rm -rf "$iconset"
+          mkdir -p "$iconset"
+          for size in 16 32 128 256 512; do
+            sips -z "$size" "$size" apps/desktop/build/icon-source.png --out "$iconset/icon_${size}x${size}.png" >/dev/null
+            double=$((size * 2))
+            sips -z "$double" "$double" apps/desktop/build/icon-source.png --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+          done
+          iconutil -c icns "$iconset" -o apps/desktop/build/icon.icns
+          rm -rf "$iconset"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install POIO dependencies
+        run: npm ci
+
+      - name: Verify POIO desktop sources
+        run: npm run test -w @echodeck/desktop
+
+      - name: Build unsigned POIO arm64 DMG
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run dist:mac -w @echodeck/desktop
+
+      - name: Verify packaged architectures
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="$(find apps/desktop/release-macos -maxdepth 2 -type d -name 'POIO.app' -print -quit)"
+          test -n "$app_path"
+          file "$app_path/Contents/MacOS/POIO" | tee /tmp/poio-app-file.txt
+          grep -q 'arm64' /tmp/poio-app-file.txt
+          test -x "$app_path/Contents/Resources/mumble/Mumble.app/Contents/MacOS/mumble"
+          file "$app_path/Contents/Resources/mumble/Mumble.app/Contents/MacOS/mumble" | grep -q 'arm64'
+          test -n "$(find apps/desktop/release-macos -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+
+      - name: Upload unsigned M4 test package
+        uses: actions/upload-artifact@v7
+        with:
+          name: POIO-mac-arm64-unsigned
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            apps/desktop/release-macos/*.dmg
+            apps/desktop/release-macos/*.zip
+            apps/desktop/release-macos/latest-mac.yml
+
+      - name: Save Mumble arm64 build environment
+        if: always() && steps.mumble-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/mumble-build-env
+          key: ${{ env.MUMBLE_ENVIRONMENT_VERSION }}

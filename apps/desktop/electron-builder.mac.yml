@@ -1,0 +1,43 @@
+appId: com.poio.desktop
+productName: POIO
+directories:
+  output: release-macos
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - build/icon.png
+  - package.json
+extraResources:
+  - from: resources/mumble-macos
+    to: mumble
+asar: true
+artifactName: POIO-${version}-mac-arm64.${ext}
+releaseInfo:
+  releaseNotesFile: build/release-notes.md
+protocols:
+  - name: POIO 社区邀请
+    schemes:
+      - poio
+publish:
+  - provider: generic
+    url: https://www.modelscope.cn/models/sjw712/POIO/resolve/master/
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  category: public.app-category.social-networking
+  icon: build/icon.icns
+  identity: null
+  hardenedRuntime: false
+  darkModeSupport: true
+  extendInfo:
+    NSMicrophoneUsageDescription: POIO 需要使用麦克风加入语音频道。
+    NSAudioCaptureUsageDescription: POIO 需要捕获系统声音用于屏幕共享。
+    NSScreenCaptureUsageDescription: POIO 需要录制屏幕用于屏幕共享。
+dmg:
+  title: POIO ${version}
+  artifactName: POIO-${version}-mac-arm64.${ext}

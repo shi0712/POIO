@@ -11,6 +11,7 @@ declare global {
   interface Window {
     echodeck?: {
       platform?: 'desktop'|'web';
+      os?: 'win32'|'darwin'|'linux';
       window: { minimize(): Promise<void>; maximize(): Promise<void>; close(): Promise<void> };
       getDesktopSources(): Promise<Array<{id:string;nativeId?:string;name:string;thumbnail:string;appIcon?:string}>>;
       captureScreenshot(): Promise<{dataUrl:string;width:number;height:number;displayName:string}>;
