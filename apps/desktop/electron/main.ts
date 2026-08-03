@@ -733,6 +733,7 @@ async function createMainWindow() {
     show: false,
     backgroundColor: '#101118',
     titleBarStyle: 'hidden',
+    ...(process.platform==='darwin'?{trafficLightPosition:{x:15,y:12}}:{}),
     icon: appIcon,
     webPreferences: {
       preload: path.join(dirname, 'preload.cjs'),
