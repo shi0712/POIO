@@ -1,8 +1,8 @@
 {
-  "versionCode": 25,
-  "versionName": "0.1.0-p24",
+  "versionCode": 26,
+  "versionName": "0.1.0-p25",
   "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
-  "sha256": "CF86EA0071955DDC3A8B01B4A055D8D57F2C98F013D4E54A085DC036CEA317FF",
-  "size": 44159540,
-  "notes": "完善文字频道与语音频道聊天：支持回复、编辑、撤回、12 种表情回应和消息搜索；长按消息即可操作，其他设备的修改会实时同步。保留图片、文件、Markdown、动态头像、原生 Mumble 语音和桌面共享观看能力。"
+  "sha256": "70FC2F2DCB00192B8A97CE694503E12F634871BDD2D0CE5CE7A6D28489BB7290",
+  "size": 44175924,
+  "notes": "修复 Android 收到屏幕共享轨道却不显示的问题；新增 P2P 直连观看，并在直连失败、名额已满或掉线时自动回退到服务器转发；观看界面会显示当前传输路径。"
 }

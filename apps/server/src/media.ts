@@ -160,12 +160,13 @@ export async function consume(socketId: string, transportId: string, producerId:
   const origin = [...peers.values()].find((p) => p.producers.has(producerId));
   if (!origin || origin.channelId !== peer.channelId) throw new Error('媒体流不可用');
   if (!router.canConsume({ producerId, rtpCapabilities: capabilities })) throw new Error('客户端不支持该编码');
-  const consumer = await transport.consume({ producerId, rtpCapabilities: capabilities, paused: true });
+  const producerAppData=origin.producers.get(producerId)?.appData??{};
+  const consumer = await transport.consume({ producerId, rtpCapabilities: capabilities, paused: true, appData:producerAppData });
   if(peers.get(socketId)!==peer||transport.closed){consumer.close();throw new Error('媒体会话已切换')}
   peer.consumers.set(consumer.id, consumer);
   consumer.on('transportclose', () => peer.consumers.delete(consumer.id));
   consumer.on('producerclose', () => peer.consumers.delete(consumer.id));
-  return { id: consumer.id, producerId, kind: consumer.kind, rtpParameters: consumer.rtpParameters, type: consumer.type, appData: consumer.appData, userId: origin.userId };
+  return { id: consumer.id, producerId, kind: consumer.kind, rtpParameters: consumer.rtpParameters, type: consumer.type, appData: producerAppData, userId: origin.userId };
 }
 
 export async function resumeConsumer(socketId: string, consumerId: string) { await peers.get(socketId)?.consumers.get(consumerId)?.resume(); }

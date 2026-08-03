@@ -2306,7 +2306,20 @@ private fun RemoteScreen(
         onDispose { activity.requestedOrientation = previousOrientation }
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("$ownerName 的屏幕", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("$ownerName 的屏幕", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                if (remote.route == "p2p") "P2P 直连" else "服务器转发",
+                fontSize = 10.sp,
+                color = if (remote.route == "p2p") Color(0xFF52E000) else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF171A18)).padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
         Box(
             Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp))
                 .background(Color.Black).clickable { fullscreen = true },

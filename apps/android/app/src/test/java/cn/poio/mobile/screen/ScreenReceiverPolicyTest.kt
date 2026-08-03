@@ -47,4 +47,16 @@ class ScreenReceiverPolicyTest {
         assertTrue(shouldEnableRemoteScreenTrack("screen", "video", screenAudioEnabled = false))
         assertTrue(shouldEnableRemoteScreenTrack("voice", "audio", screenAudioEnabled = false))
     }
+
+    @Test
+    fun emptyConsumerAppDataFallsBackToTheProducerScreenTag() {
+        assertEquals("screen", resolveScreenMediaTag("", "screen", "video"))
+        assertEquals("screen-audio", resolveScreenMediaTag(null, "screen-audio", "audio"))
+    }
+
+    @Test
+    fun consumerTagWinsAndKindIsTheLastFallback() {
+        assertEquals("screen", resolveScreenMediaTag("screen", "ignored", "video"))
+        assertEquals("video", resolveScreenMediaTag(null, null, "video"))
+    }
 }
