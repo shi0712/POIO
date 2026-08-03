@@ -89,7 +89,7 @@ function sidecarDirectory() {
 
 function sidecarExecutable(directory:string) {
   return process.platform==='darwin'
-    ? path.join(directory,'Mumble.app','Contents','MacOS','mumble')
+    ? path.join(directory,'Mumble.app','Contents','MacOS','Mumble')
     : path.join(directory,'mumble.exe');
 }
 

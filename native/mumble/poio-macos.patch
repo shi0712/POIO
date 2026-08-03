@@ -320,6 +320,17 @@ index fdd6e028..bed374d8 100644
  	if (g_hotkeyThread.joinable()) {
  		g_hotkeyThread.join();
  	}
+diff --git a/plugins/echodeckBridge/CMakeLists.txt b/plugins/echodeckBridge/CMakeLists.txt
+--- a/plugins/echodeckBridge/CMakeLists.txt
++++ b/plugins/echodeckBridge/CMakeLists.txt
+@@ -4,3 +4,7 @@
+ if(WIN32)
+ 	target_link_libraries(echodeckBridge PRIVATE advapi32.lib)
+ endif()
++
++if(APPLE)
++	set_target_properties(echodeckBridge PROPERTIES PREFIX "")
++endif()
 diff --git a/src/mumble/CMakeLists.txt b/src/mumble/CMakeLists.txt
 index d1e33078..bfb2b169 100644
 --- a/src/mumble/CMakeLists.txt

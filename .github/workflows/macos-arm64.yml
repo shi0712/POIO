@@ -103,7 +103,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -x mumble-build/Mumble.app/Contents/MacOS/mumble
+          test -x mumble-build/Mumble.app/Contents/MacOS/Mumble
           bridge="$(find mumble-build/plugins -maxdepth 1 -type f \( -iname '*echodeckBridge*.dylib' -o -iname '*echodeckBridge*.so' \) -print -quit)"
           test -n "$bridge"
           rm -rf apps/desktop/resources/mumble-macos
@@ -112,7 +112,7 @@ jobs:
           ditto "$bridge" "apps/desktop/resources/mumble-macos/Mumble.app/Contents/Plugins/$(basename "$bridge")"
           /usr/libexec/PlistBuddy -c 'Add :LSUIElement bool true' apps/desktop/resources/mumble-macos/Mumble.app/Contents/Info.plist \
             || /usr/libexec/PlistBuddy -c 'Set :LSUIElement true' apps/desktop/resources/mumble-macos/Mumble.app/Contents/Info.plist
-          file apps/desktop/resources/mumble-macos/Mumble.app/Contents/MacOS/mumble | tee /tmp/poio-mumble-file.txt
+          file apps/desktop/resources/mumble-macos/Mumble.app/Contents/MacOS/Mumble | tee /tmp/poio-mumble-file.txt
           grep -q 'arm64' /tmp/poio-mumble-file.txt
           file "apps/desktop/resources/mumble-macos/Mumble.app/Contents/Plugins/$(basename "$bridge")" | grep -q 'arm64'
 
@@ -156,8 +156,8 @@ jobs:
           test -n "$app_path"
           file "$app_path/Contents/MacOS/POIO" | tee /tmp/poio-app-file.txt
           grep -q 'arm64' /tmp/poio-app-file.txt
-          test -x "$app_path/Contents/Resources/mumble/Mumble.app/Contents/MacOS/mumble"
-          file "$app_path/Contents/Resources/mumble/Mumble.app/Contents/MacOS/mumble" | grep -q 'arm64'
+          test -x "$app_path/Contents/Resources/mumble/Mumble.app/Contents/MacOS/Mumble"
+          file "$app_path/Contents/Resources/mumble/Mumble.app/Contents/MacOS/Mumble" | grep -q 'arm64'
           test -n "$(find apps/desktop/release-macos -maxdepth 1 -type f -name '*.dmg' -print -quit)"
 
       - name: Upload unsigned M4 test package
