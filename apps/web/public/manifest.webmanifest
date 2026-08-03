@@ -2,11 +2,12 @@
   "name":"POIO 网页版",
   "short_name":"POIO",
   "description":"语音、社区聊天与低延迟屏幕共享",
-  "start_url":"/",
+  "start_url":"/poio/web/",
+  "scope":"/poio/web/",
   "display":"standalone",
   "background_color":"#101118",
   "theme_color":"#7458ff",
   "icons":[
-    {"src":"/icon.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+    {"src":"/poio/web/icon.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
   ]
 }
