@@ -652,7 +652,12 @@ async function installDownloadedMacUpdate() {
   if(!file||!existsSync(file))return publishUpdateStatus({...appUpdateStatus,state:'error',message:'找不到已下载的 DMG，请重新下载'});
   const error=await shell.openPath(file);
   if(error)return publishUpdateStatus({...appUpdateStatus,state:'error',message:`无法打开 DMG：${error}`});
-  return publishUpdateStatus({...appUpdateStatus,state:'downloaded',message:'DMG 已打开，请将 POIO 拖入“应用程序”以覆盖旧版本',installMode:'open-dmg'});
+  const status=publishUpdateStatus({...appUpdateStatus,state:'downloaded',message:'DMG 已打开，POIO 即将退出；请将新版拖入“应用程序”覆盖安装',installMode:'open-dmg'});
+  setTimeout(()=>{
+    appQuitting=true;
+    app.quit();
+  },800);
+  return status;
 }
 
 async function downloadAppUpdate() {
