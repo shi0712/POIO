@@ -131,6 +131,16 @@ function sameMumbleConnection(left:MumbleConnection|undefined,right:MumbleConnec
   return Boolean(left&&right&&connectionIdentity(left)===connectionIdentity(right)&&left.channelName===right.channelName);
 }
 
+function restoreMainWindowFocusAfterVoiceConnect(shouldRestore:boolean) {
+  if(process.platform!=='darwin'||!shouldRestore)return;
+  setTimeout(()=>{
+    const window=mainWindow;
+    if(!window||window.isDestroyed()||!window.isVisible())return;
+    app.focus({steal:true});
+    window.focus();
+  },0);
+}
+
 function stopMumble(clearDesired=true) {
   const child=mumbleProcess;
   mumbleProcess = null;
@@ -231,6 +241,7 @@ async function connectMumble(connection:MumbleConnection,recovering=false) {
   if(!/^[a-zA-Z0-9.-]{1,253}$/.test(connection.host)||!Number.isInteger(connection.port)||connection.port<1||connection.port>65535) throw new Error('Mumble 服务器地址无效');
   if(!connection.username||connection.username.length>64||!connection.channelName||connection.channelName.length>128) throw new Error('Mumble 连接参数无效');
   const identity=connectionIdentity(connection);
+  const restoreFocusWhenConnected=!recovering&&process.platform==='darwin'&&mainWindow?.isFocused()===true;
   const activeProcess=mumbleProcess;
   const sameActiveConnection=!recovering
     &&mumbleRuntimeState.state==='connected'
@@ -276,6 +287,7 @@ async function connectMumble(connection:MumbleConnection,recovering=false) {
           const status=await activateMumbleAudio();
           mumbleRestartAttempts=0;
           publishMumbleState({state:'connected'});
+          restoreMainWindowFocusAfterVoiceConnect(restoreFocusWhenConnected);
           return status;
         }
         await new Promise(resolve=>setTimeout(resolve,150));
@@ -320,7 +332,7 @@ async function connectMumble(connection:MumbleConnection,recovering=false) {
   try{
     await waitForMumbleBridge(child);
     const deadline=Date.now()+15_000;
-    while(Date.now()<deadline){const status=await mumbleCommand('STATUS');if(/connected=1/.test(status)){const active=await activateMumbleAudio();mumbleRestartAttempts=0;publishMumbleState({state:'connected'});return active}await new Promise(resolve=>setTimeout(resolve,300));}
+    while(Date.now()<deadline){const status=await mumbleCommand('STATUS');if(/connected=1/.test(status)){const active=await activateMumbleAudio();mumbleRestartAttempts=0;publishMumbleState({state:'connected'});restoreMainWindowFocusAfterVoiceConnect(restoreFocusWhenConnected);return active}await new Promise(resolve=>setTimeout(resolve,300));}
     throw new Error('Mumble 服务器连接超时');
   }catch(error){
     if(mumbleProcess===child)stopMumble(false);
@@ -838,7 +850,7 @@ async function createMainWindow() {
     show: false,
     backgroundColor: '#101118',
     titleBarStyle: 'hidden',
-    ...(process.platform==='darwin'?{trafficLightPosition:{x:15,y:12}}:{}),
+    ...(process.platform==='darwin'?{trafficLightPosition:{x:15,y:12},acceptFirstMouse:true}:{}),
     icon: appIcon,
     webPreferences: {
       preload: path.join(dirname, 'preload.cjs'),
