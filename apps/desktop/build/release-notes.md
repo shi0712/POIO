@@ -1,3 +1,7 @@
+版本：POIO 0.8.8
+平台：macOS Apple Silicon
+安装包：DMG / ZIP（未签名）
+
 POIO 0.8.8 完善未签名 macOS 客户端的在线更新体验。
 
 - 只对已完成大小与 SHA-512 校验的 POIO 更新 DMG 自动移除 quarantine 属性。
