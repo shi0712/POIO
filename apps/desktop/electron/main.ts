@@ -627,19 +627,38 @@ async function createMainWindow() {
       sandbox: true
     }
   });
+  let launchPresented=false;
+  let launchFallback:NodeJS.Timeout|undefined;
+  const presentMainWindow=()=>{
+    if(launchPresented)return;
+    launchPresented=true;
+    if(launchFallback)clearTimeout(launchFallback);
+    launchFallback=undefined;
+    const splash=splashWindow;
+    splashWindow=null;
+    if(splash&&!splash.isDestroyed())splash.close();
+    const window=mainWindow;
+    if(!process.argv.includes('--hidden')&&window&&!window.isDestroyed()){
+      window.show();
+      window.focus();
+    }
+  };
+  // Register before loading. On macOS ready-to-show can fire while loadFile()
+  // is still awaiting, which previously left the splash window open forever.
+  mainWindow.once('ready-to-show',()=>setTimeout(presentMainWindow,350));
+  launchFallback=setTimeout(presentMainWindow,12_000);
+  launchFallback.unref();
   const devUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devUrl) await mainWindow.loadURL(devUrl);
-  else await mainWindow.loadFile(path.join(dirname, '../dist/index.html'));
+  try{
+    if (devUrl) await mainWindow.loadURL(devUrl);
+    else await mainWindow.loadFile(path.join(dirname, '../dist/index.html'));
+  }catch(error){
+    presentMainWindow();
+    throw error;
+  }
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
-  });
-  mainWindow.once('ready-to-show', () => {
-    setTimeout(() => {
-      splashWindow?.close();
-      splashWindow = null;
-      if(!process.argv.includes('--hidden'))mainWindow?.show();
-    }, 900);
   });
   mainWindow.on('close',event=>{
     if(appQuitting||!desktopPreferences.closeToTray)return;
@@ -655,7 +674,13 @@ async function createMainWindow() {
       });
     }
   });
-  mainWindow.once('closed',()=>{mainWindow=null});
+  mainWindow.once('closed',()=>{
+    if(launchFallback)clearTimeout(launchFallback);
+    const splash=splashWindow;
+    splashWindow=null;
+    if(splash&&!splash.isDestroyed())splash.close();
+    mainWindow=null;
+  });
 }
 
 app.setAppUserModelId('com.poio.desktop');

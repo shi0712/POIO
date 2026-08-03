@@ -335,7 +335,7 @@ diff --git a/src/mumble/CMakeLists.txt b/src/mumble/CMakeLists.txt
 index d1e33078..bfb2b169 100644
 --- a/src/mumble/CMakeLists.txt
 +++ b/src/mumble/CMakeLists.txt
-@@ -409,6 +409,13 @@ target_compile_definitions(mumble_client_object_lib
+@@ -409,6 +409,27 @@ target_compile_definitions(mumble_client_object_lib
  
  set_target_properties(mumble PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
  
@@ -344,6 +344,20 @@ index d1e33078..bfb2b169 100644
 +# dlsym without changing the normal Windows build.
 +if(APPLE)
 +	set_target_properties(mumble PROPERTIES ENABLE_EXPORTS ON)
++	target_link_options(mumble PRIVATE
++		"-Wl,-exported_symbol,_EchoDeck_GetAudioDevices"
++		"-Wl,-exported_symbol,_EchoDeck_SetAudioDevice"
++		"-Wl,-exported_symbol,_EchoDeck_GetInputLevel"
++		"-Wl,-exported_symbol,_EchoDeck_IsTransmitting"
++		"-Wl,-exported_symbol,_EchoDeck_IsPushToTalkActive"
++		"-Wl,-exported_symbol,_EchoDeck_ConfigureRuntime"
++		"-Wl,-exported_symbol,_EchoDeck_ConfigureHotkeys"
++		"-Wl,-exported_symbol,_EchoDeck_SetPushToTalk"
++		"-Wl,-exported_symbol,_EchoDeck_GetVolume"
++		"-Wl,-exported_symbol,_EchoDeck_SetVolume"
++		"-Wl,-exported_symbol,_EchoDeck_GetUsers"
++		"-Wl,-exported_symbol,_EchoDeck_SetUserVolume"
++	)
 +endif()
 +
  set_target_properties(mumble_client_object_lib
@@ -362,7 +376,7 @@ index 05366179..6eb91029 100644
 +#	ifdef Q_OS_WIN
 +#		define POIO_NATIVE_EXPORT __declspec(dllexport)
 +#	else
-+#		define POIO_NATIVE_EXPORT __attribute__((visibility("default")))
++#		define POIO_NATIVE_EXPORT __attribute__((used, visibility("default")))
 +#	endif
  namespace {
  QByteArray echoDeckAudioDevicesJson() {
