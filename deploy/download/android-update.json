@@ -1,8 +1,8 @@
 {
-  "versionCode": 27,
-  "versionName": "0.1.0-p26",
+  "versionCode": 28,
+  "versionName": "1.0.0",
   "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
-  "sha256": "38A430146E66168C69CD83EF496552BCEA4ED287468D4457B630EA36DEA72D80",
-  "size": 44373107,
-  "notes": "消息操作不再依赖长按：每条消息增加明确的更多按钮，并补充复制消息；新增与 Windows 一致的进入、退出、关闭/打开麦克风、关闭/打开听筒提示音，同时支持播放成员自定义进入音。"
+  "sha256": "888A133CC90FA099C31CC32545CCAF1D6646FD93AD2ABEE2DCB3C5B4B29E17E1",
+  "size": 44373099,
+  "notes": "POIO Android 1.0.0 正式版：修复语音提示音的输出路由，进入、退出、关闭/打开麦克风、关闭/打开听筒音效会跟随当前通话设备播放；退出语音后自动回退到媒体音频通道。"
 }

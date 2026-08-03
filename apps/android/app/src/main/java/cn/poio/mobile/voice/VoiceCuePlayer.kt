@@ -17,8 +17,13 @@ class VoiceCuePlayer(context: Context) {
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
     private val lastPlayedAt = EnumMap<VoiceCue, Long>(VoiceCue::class.java)
-    private val audioAttributes = AudioAttributes.Builder()
-        .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+    private val audioManager = appContext.getSystemService(AudioManager::class.java)
+    private val communicationAudioAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+        .build()
+    private val mediaAudioAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
         .build()
     private var activePlayer: MediaPlayer? = null
@@ -60,7 +65,7 @@ class VoiceCuePlayer(context: Context) {
         val player = MediaPlayer.create(
             appContext,
             resourceId,
-            audioAttributes,
+            currentAudioAttributes(),
             AudioManager.AUDIO_SESSION_ID_GENERATE,
         ) ?: return
         activePlayer = player
@@ -76,7 +81,7 @@ class VoiceCuePlayer(context: Context) {
     private fun playRemote(url: String, fallbackResourceId: Int, volume: Float) {
         val player = MediaPlayer()
         activePlayer = player
-        player.setAudioAttributes(audioAttributes)
+        player.setAudioAttributes(currentAudioAttributes())
         player.setVolume(volume, volume)
         player.setOnPreparedListener { prepared ->
             if (activePlayer === prepared) prepared.start() else runCatching { prepared.release() }
@@ -112,7 +117,19 @@ class VoiceCuePlayer(context: Context) {
         if (path.startsWith("http://") || path.startsWith("https://")) path
         else BuildConfig.POIO_SERVER_URL.trimEnd('/') + "/" + path.trimStart('/')
 
+    private fun currentAudioAttributes(): AudioAttributes = when (
+        voiceCueAudioRoute(audioManager.mode == AudioManager.MODE_IN_COMMUNICATION)
+    ) {
+        VoiceCueAudioRoute.COMMUNICATION -> communicationAudioAttributes
+        VoiceCueAudioRoute.MEDIA -> mediaAudioAttributes
+    }
+
     companion object {
         private const val MIN_CUE_INTERVAL_MS = 350L
     }
 }
+
+internal enum class VoiceCueAudioRoute { COMMUNICATION, MEDIA }
+
+internal fun voiceCueAudioRoute(inCommunicationMode: Boolean): VoiceCueAudioRoute =
+    if (inCommunicationMode) VoiceCueAudioRoute.COMMUNICATION else VoiceCueAudioRoute.MEDIA
