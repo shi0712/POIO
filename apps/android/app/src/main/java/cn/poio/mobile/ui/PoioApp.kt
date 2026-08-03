@@ -2,11 +2,14 @@ package cn.poio.mobile.ui
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -68,6 +71,8 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.KeyboardVoice
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
@@ -1082,6 +1087,7 @@ private fun ChatScreen(
     onClearSearch: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     var body by rememberSaveable { mutableStateOf("") }
     var replyingTo by remember { mutableStateOf<ChatMessage?>(null) }
     var editingMessage by remember { mutableStateOf<ChatMessage?>(null) }
@@ -1365,6 +1371,13 @@ private fun ChatScreen(
                 onReact(message.id, emoji)
                 actionMessage = null
             },
+            onCopy = {
+                val text = messageCopyText(message)
+                context.getSystemService(ClipboardManager::class.java)
+                    .setPrimaryClip(ClipData.newPlainText("POIO 消息", text))
+                Toast.makeText(context, "消息已复制", Toast.LENGTH_SHORT).show()
+                actionMessage = null
+            },
         )
     }
 }
@@ -1392,19 +1405,26 @@ private fun MessageCard(
         Modifier.fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(if (highlighted) MaterialTheme.colorScheme.primary.copy(alpha = .16f) else Color.Transparent)
-            .pointerInput(message.id, message.deleted) {
-                if (!message.deleted) detectTapGestures(onLongPress = { onActions() })
-            }
             .padding(horizontal = 7.dp, vertical = 7.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         UserAvatar(message.avatarUrl, message.username, 36.dp)
         Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
                 Text(message.username, fontWeight = FontWeight.Bold)
                 Text(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(message.createdAt)), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (message.editedAt != null) {
                     Text("已编辑", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.weight(1f))
+                if (!message.deleted) {
+                    IconButton(onClick = onActions, modifier = Modifier.size(30.dp)) {
+                        Icon(Icons.Default.MoreVert, "消息操作", Modifier.size(18.dp))
+                    }
                 }
             }
             message.reply?.let { reply ->
@@ -1502,6 +1522,7 @@ private fun MessageActionsSheet(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onReact: (String) -> Unit,
+    onCopy: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -1527,6 +1548,11 @@ private fun MessageActionsSheet(
                     }
                 }
             }
+            FilledTonalButton(onClick = onCopy, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.ContentCopy, null)
+                Spacer(Modifier.width(8.dp))
+                Text("复制消息")
+            }
             FilledTonalButton(onClick = onReply, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.AutoMirrored.Filled.Reply, null)
                 Spacer(Modifier.width(8.dp))
@@ -1549,6 +1575,11 @@ private fun MessageActionsSheet(
         }
     }
 }
+
+internal fun messageCopyText(message: ChatMessage): String = message.body.takeIf { it.isNotBlank() }
+    ?: message.attachmentUrl
+    ?: message.attachmentName
+    ?: ""
 
 @Composable
 private fun UserAvatar(url: String?, username: String, size: androidx.compose.ui.unit.Dp) {

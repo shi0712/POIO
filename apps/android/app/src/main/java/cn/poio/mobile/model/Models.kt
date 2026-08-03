@@ -3,7 +3,13 @@ package cn.poio.mobile.model
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class User(val id: String, val username: String, val avatarUrl: String? = null, val role: String? = null)
+data class User(
+    val id: String,
+    val username: String,
+    val avatarUrl: String? = null,
+    val role: String? = null,
+    val joinSoundUrl: String? = null,
+)
 data class Channel(val id: String, val name: String, val kind: ChannelKind, val spaceId: String? = null, val position: Int = 0)
 enum class ChannelKind { TEXT, VOICE }
 data class Space(val id: String, val name: String, val ownerId: String, val channels: List<Channel>)
@@ -57,6 +63,7 @@ object PoioJson {
         username = value.getString("username"),
         avatarUrl = value.nullableString("avatarUrl"),
         role = value.nullableString("role"),
+        joinSoundUrl = value.nullableString("joinSoundUrl"),
     )
 
     fun channel(value: JSONObject) = Channel(

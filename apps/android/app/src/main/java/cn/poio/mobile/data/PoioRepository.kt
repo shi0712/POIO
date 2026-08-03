@@ -21,7 +21,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -52,6 +55,14 @@ data class PoioState(
     val selectedChannel get() = selectedSpace?.channels?.firstOrNull { it.id == selectedChannelId } ?: selectedSpace?.channels?.firstOrNull()
 }
 
+sealed interface VoicePresenceCue {
+    val channelId: String
+    val user: User
+
+    data class Joined(override val channelId: String, override val user: User) : VoicePresenceCue
+    data class Left(override val channelId: String, override val user: User) : VoicePresenceCue
+}
+
 class PoioRepository(
     private val scope: CoroutineScope,
     private val session: SecureSessionStore,
@@ -61,6 +72,8 @@ class PoioRepository(
     private val uploader = AttachmentUploader(contentResolver, session, BuildConfig.POIO_SERVER_URL)
     private val mutableState = MutableStateFlow(PoioState())
     val state: StateFlow<PoioState> = mutableState.asStateFlow()
+    private val mutableVoicePresenceCues = MutableSharedFlow<VoicePresenceCue>(extraBufferCapacity = 16)
+    val voicePresenceCues: SharedFlow<VoicePresenceCue> = mutableVoicePresenceCues.asSharedFlow()
     private var restoreJob: Job? = null
 
     fun start() {
@@ -97,6 +110,18 @@ class PoioRepository(
             mutableState.value = mutableState.value.copy(
                 voiceMembers = mutableState.value.voiceMembers + (channelId to users),
             )
+        }
+        client.on("voice:memberJoined") { args ->
+            val value = args.firstOrNull() as? JSONObject ?: return@on
+            val channelId = value.optString("channelId").takeIf(String::isNotBlank) ?: return@on
+            val user = value.optJSONObject("user")?.let(PoioJson::user) ?: return@on
+            mutableVoicePresenceCues.tryEmit(VoicePresenceCue.Joined(channelId, user))
+        }
+        client.on("voice:memberLeft") { args ->
+            val value = args.firstOrNull() as? JSONObject ?: return@on
+            val channelId = value.optString("channelId").takeIf(String::isNotBlank) ?: return@on
+            val user = value.optJSONObject("user")?.let(PoioJson::user) ?: return@on
+            mutableVoicePresenceCues.tryEmit(VoicePresenceCue.Left(channelId, user))
         }
         client.on("user:updated") { args ->
             val value = args.firstOrNull() as? JSONObject ?: return@on

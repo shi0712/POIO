@@ -2,9 +2,11 @@ package cn.poio.mobile
 
 import android.app.Application
 import cn.poio.mobile.data.PoioRepository
+import cn.poio.mobile.data.VoicePresenceCue
 import cn.poio.mobile.session.SecureSessionStore
 import cn.poio.mobile.voice.NativeMumbleVoiceEngine
 import cn.poio.mobile.voice.VoiceState
+import cn.poio.mobile.voice.VoiceCuePlayer
 import cn.poio.mobile.voice.nextNotificationMuteState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,12 +20,31 @@ class PoioApplication : Application() {
         private set
     lateinit var voiceEngine: NativeMumbleVoiceEngine
         private set
+    lateinit var voiceCuePlayer: VoiceCuePlayer
+        private set
 
     override fun onCreate() {
         super.onCreate()
         repository = PoioRepository(runtimeScope, SecureSessionStore(this), contentResolver)
         voiceEngine = NativeMumbleVoiceEngine(this)
+        voiceCuePlayer = VoiceCuePlayer(this)
         repository.start()
+        runtimeScope.launch {
+            repository.voicePresenceCues.collect { cue ->
+                val current = repository.state.value
+                if (!shouldPlayVoicePresenceCue(
+                        activeChannelId = current.voiceChannelId,
+                        currentUserId = current.user?.id,
+                        eventChannelId = cue.channelId,
+                        eventUserId = cue.user.id,
+                    )
+                ) return@collect
+                when (cue) {
+                    is VoicePresenceCue.Joined -> voiceCuePlayer.playJoin(cue.user.joinSoundUrl)
+                    is VoicePresenceCue.Left -> voiceCuePlayer.playLeave()
+                }
+            }
+        }
         runtimeScope.launch {
             var observedGeneration = 0L
             repository.state.collect { current ->
@@ -56,15 +77,33 @@ class PoioApplication : Application() {
     fun toggleMuteFromNotification() {
         val target = nextNotificationMuteState(voiceEngine.state.value) ?: return
         runtimeScope.launch {
-            runCatching { voiceEngine.setMuted(target) }.onFailure(repository::reportError)
+            runCatching {
+                val before = voiceEngine.state.value as? VoiceState.Connected
+                voiceEngine.setMuted(target)
+                val after = voiceEngine.state.value as? VoiceState.Connected
+                if (after != null && before?.muted != after.muted) {
+                    if (after.muted) voiceCuePlayer.playMute() else voiceCuePlayer.playUnmute()
+                }
+            }.onFailure(repository::reportError)
         }
     }
 
     fun leaveVoiceFromNotification() {
+        val hadVoice = repository.state.value.voiceChannelId != null
         repository.markVoiceLeftLocally()
         runtimeScope.launch {
             runCatching { voiceEngine.disconnect() }
             runCatching { repository.announceVoiceLeave() }
+            if (hadVoice) voiceCuePlayer.playLeave()
         }
     }
 }
+
+internal fun shouldPlayVoicePresenceCue(
+    activeChannelId: String?,
+    currentUserId: String?,
+    eventChannelId: String,
+    eventUserId: String,
+): Boolean = activeChannelId != null &&
+    activeChannelId == eventChannelId &&
+    currentUserId != eventUserId

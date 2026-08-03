@@ -26,6 +26,7 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
     private val poioApplication = application as PoioApplication
     private val repository = poioApplication.repository
     private val voiceEngine = poioApplication.voiceEngine
+    private val voiceCuePlayer = poioApplication.voiceCuePlayer
     private val microphoneTester = MicrophoneTester(application)
     private val screenReceiver = MediasoupScreenReceiver(application, repository.client)
     private val updateManager = AndroidUpdateManager(application, viewModelScope)
@@ -124,6 +125,7 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
                 val credentials = repository.voiceCredentials(channelId)
                 voiceEngine.connect(credentials)
                 repository.announceVoiceJoin(channelId)
+                voiceCuePlayer.playJoin(state.value.user?.joinSoundUrl)
             }.onFailure { error ->
                 runCatching { screenReceiver.leave() }
                 runCatching { voiceEngine.disconnect() }
@@ -132,8 +134,30 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
         }
     }
     override fun leaveVoice() { viewModelScope.launch { leaveVoiceInternal() } }
-    override fun setMuted(muted: Boolean) { viewModelScope.launch { runVoiceAction { voiceEngine.setMuted(muted) } } }
-    override fun setDeafened(deafened: Boolean) { viewModelScope.launch { runVoiceAction { voiceEngine.setDeafened(deafened) } } }
+    override fun setMuted(muted: Boolean) {
+        viewModelScope.launch {
+            runVoiceAction {
+                val before = voiceState.value as? VoiceState.Connected
+                voiceEngine.setMuted(muted)
+                val after = voiceState.value as? VoiceState.Connected
+                if (after != null && before?.muted != after.muted) {
+                    if (after.muted) voiceCuePlayer.playMute() else voiceCuePlayer.playUnmute()
+                }
+            }
+        }
+    }
+    override fun setDeafened(deafened: Boolean) {
+        viewModelScope.launch {
+            runVoiceAction {
+                val before = voiceState.value as? VoiceState.Connected
+                voiceEngine.setDeafened(deafened)
+                val after = voiceState.value as? VoiceState.Connected
+                if (after != null && before?.deafened != after.deafened) {
+                    if (after.deafened) voiceCuePlayer.playDeafen() else voiceCuePlayer.playUndeafen()
+                }
+            }
+        }
+    }
     override fun selectVoiceRoute(routeId: Int) { viewModelScope.launch { runVoiceAction { voiceEngine.selectRoute(routeId) } } }
     override fun setUserVolume(sessionId: Int, volume: Int) { viewModelScope.launch { runVoiceAction { voiceEngine.setUserVolume(sessionId, volume) } } }
     override fun selectInputRoute(routeId: Int) {
@@ -189,6 +213,7 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
     }
 
     private suspend fun leaveVoiceInternal() {
+        val hadVoice = state.value.voiceChannelId != null
         screenRecoveryJob?.cancel()
         screenRecoveryJob = null
         screenRecoveryAttempt = 0
@@ -198,6 +223,7 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
             announceRemoteLeave = repository::announceVoiceLeave,
             leaveScreen = screenReceiver::leave,
         )
+        if (hadVoice) voiceCuePlayer.playLeave()
     }
 
     private suspend fun runVoiceAction(action: suspend () -> Unit) {

@@ -1,8 +1,8 @@
 {
-  "versionCode": 26,
-  "versionName": "0.1.0-p25",
+  "versionCode": 27,
+  "versionName": "0.1.0-p26",
   "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
-  "sha256": "70FC2F2DCB00192B8A97CE694503E12F634871BDD2D0CE5CE7A6D28489BB7290",
-  "size": 44175924,
-  "notes": "修复 Android 收到屏幕共享轨道却不显示的问题；新增 P2P 直连观看，并在直连失败、名额已满或掉线时自动回退到服务器转发；观看界面会显示当前传输路径。"
+  "sha256": "38A430146E66168C69CD83EF496552BCEA4ED287468D4457B630EA36DEA72D80",
+  "size": 44373107,
+  "notes": "消息操作不再依赖长按：每条消息增加明确的更多按钮，并补充复制消息；新增与 Windows 一致的进入、退出、关闭/打开麦克风、关闭/打开听筒提示音，同时支持播放成员自定义进入音。"
 }
