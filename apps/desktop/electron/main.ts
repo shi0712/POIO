@@ -48,6 +48,8 @@ type MumbleUserVolume = { username:string;volume:number;talking:boolean };
 type AppUpdateStatus = { state:'idle'|'checking'|'available'|'downloading'|'downloaded'|'up-to-date'|'error'|'development';version?:string;percent?:number;message?:string;notes?:string;installMode?:'restart'|'open-dmg' };
 type MacUpdateFile = { url:string;sha512:string;size?:number };
 type MacUpdateManifest = { version?:unknown;files?:unknown;releaseNotes?:unknown };
+type DesktopShareSource = { id:string;nativeId?:string;name:string;thumbnail:string };
+type NativeShareSource = { id:string;kind:'monitor'|'window';name:string;application:string };
 type VoiceShortcut = { virtualKey:number;modifiers:number;label:string };
 type DesktopPreferences = { closeToTray:boolean;launchAtLogin:boolean;muteShortcut:VoiceShortcut;pushToTalkEnabled:boolean;pushToTalkShortcut:VoiceShortcut };
 type StoredDesktopPreferences = { closeToTray:boolean;trayHintShown:boolean;muteShortcut:VoiceShortcut;pushToTalkEnabled:boolean;pushToTalkShortcut:VoiceShortcut };
@@ -63,6 +65,9 @@ const macUpdateManifestUrls=[
   `${appUpdateFeedUrl}latest-mac.yml`,
   'https://github.com/shi0712/POIO/releases/latest/download/latest-mac.yml',
 ];
+let desktopShareSourcesCache:DesktopShareSource[]=[];
+let desktopShareSourcesCacheAt=0;
+let desktopShareSourcesInFlight:Promise<DesktopShareSource[]>|undefined;
 let desktopPreferences:StoredDesktopPreferences={closeToTray:true,trayHintShown:false,muteShortcut:defaultMuteShortcut,pushToTalkEnabled:false,pushToTalkShortcut:defaultPushToTalkShortcut};
 
 function sendToMainWindow(channel:string,value:unknown) {
@@ -939,6 +944,45 @@ async function createMainWindow() {
   });
 }
 
+async function collectDesktopShareSources():Promise<DesktopShareSource[]> {
+  const nativeSourcesPromise:Promise<NativeShareSource[]>=nativeShare.available
+    ?nativeShare.command<NativeShareSource[]>('sources',{}).catch(()=>[])
+    :Promise.resolve([]);
+  const [sources,nativeSources]=await Promise.all([
+    desktopCapturer.getSources({types:['screen','window'],thumbnailSize:{width:320,height:180},fetchWindowIcons:false}),
+    nativeSourcesPromise,
+  ]);
+  const monitors=nativeSources.filter(source=>source.kind==='monitor');
+  const windows=nativeSources.filter(source=>source.kind==='window');
+  let monitorIndex=0;
+  const claimedWindows=new Set<string>();
+  return sources.map(source=>{
+    let nativeId:string|undefined;
+    if(source.id.startsWith('screen:'))nativeId=monitors[monitorIndex++]?.id;
+    else{
+      const exact=windows.find(item=>!claimedWindows.has(item.id)&&item.name===source.name);
+      const byApplication=exact??windows.find(item=>!claimedWindows.has(item.id)&&source.name.toLowerCase().includes(item.application.replace(/\.exe$/i,'').toLowerCase()));
+      const match=exact??byApplication;
+      if(match){nativeId=match.id;claimedWindows.add(match.id)}
+    }
+    return {id:source.id,nativeId,name:source.name,thumbnail:source.thumbnail.toDataURL()};
+  });
+}
+
+async function getDesktopShareSources() {
+  if(desktopShareSourcesCache.length>0&&Date.now()-desktopShareSourcesCacheAt<4000)return desktopShareSourcesCache;
+  if(desktopShareSourcesInFlight)return desktopShareSourcesInFlight;
+  desktopShareSourcesInFlight=collectDesktopShareSources();
+  try{
+    const sources=await desktopShareSourcesInFlight;
+    desktopShareSourcesCache=sources;
+    desktopShareSourcesCacheAt=Date.now();
+    return sources;
+  }finally{
+    desktopShareSourcesInFlight=undefined;
+  }
+}
+
 app.setAppUserModelId('com.poio.desktop');
 if(process.env.POIO_DISABLE_PROTOCOL_REGISTRATION!=='1'){
   if(process.defaultApp&&process.argv[1])app.setAsDefaultProtocolClient('poio',process.execPath,[path.resolve(process.argv[1])]);
@@ -968,28 +1012,7 @@ app.whenReady().then(async () => {
     pendingInviteCode=undefined;
     return code;
   });
-  ipcMain.handle('desktop:sources', async () => {
-    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 360, height: 200 }, fetchWindowIcons: true });
-    type NativeSource={id:string;kind:'monitor'|'window';name:string;application:string};
-    let nativeSources:NativeSource[]=[];
-    if(nativeShare.available){
-      try{nativeSources=await nativeShare.command<NativeSource[]>('sources',{})}catch{}
-    }
-    const monitors=nativeSources.filter(source=>source.kind==='monitor');
-    const windows=nativeSources.filter(source=>source.kind==='window');
-    let monitorIndex=0;
-    const claimedWindows=new Set<string>();
-    return sources.map((source) => {
-      let nativeId:string|undefined;
-      if(source.id.startsWith('screen:'))nativeId=monitors[monitorIndex++]?.id;
-      else{
-        const exact=windows.find(item=>!claimedWindows.has(item.id)&&item.name===source.name);
-        const byApplication=exact??windows.find(item=>!claimedWindows.has(item.id)&&source.name.toLowerCase().includes(item.application.replace(/\.exe$/i,'').toLowerCase()));
-        const match=exact??byApplication;if(match){nativeId=match.id;claimedWindows.add(match.id)}
-      }
-      return { id: source.id, nativeId, name: source.name, thumbnail: source.thumbnail.toDataURL(), appIcon: source.appIcon?.toDataURL() };
-    });
-  });
+  ipcMain.handle('desktop:sources',()=>getDesktopShareSources());
   ipcMain.handle('desktop:capture', async () => {
     const window=mainWindow;
     if(!window||window.isDestroyed())throw new Error('POIO 窗口不可用');

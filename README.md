@@ -7,8 +7,8 @@
 <p align="center">面向朋友与小型社区的 Windows / Android 语音、聊天和低延迟屏幕共享客户端。</p>
 
 <p align="center">
-  <a href="https://115.159.222.29/poio/download/">下载最新版</a> ·
-  <a href="https://115.159.222.29/poio/download/">POIO 官网</a> ·
+  <a href="https://115.159.222.29/poio/">下载最新版</a> ·
+  <a href="https://115.159.222.29/poio/">POIO 官网</a> ·
   <a href="https://www.modelscope.cn/models/sjw712/POIO/files">ModelScope 镜像</a>
 </p>
 
@@ -51,7 +51,7 @@
 
 ## 使用发行版
 
-1. 从 [POIO 下载页](https://115.159.222.29/poio/download/) 下载 Windows 安装包或 Android arm64 APK。
+1. 从 [POIO 官网](https://115.159.222.29/poio/) 下载 Windows、macOS 或 Android 客户端。
 2. 安装并注册/登录账号。
 3. 创建社区后复制邀请码给朋友；朋友首次加入后，社区会保留在左侧列表，不必每次重新输入。
 4. 进入语音频道即可连接 Mumble 原生语音；“共享屏幕”可选择来源和清晰度。

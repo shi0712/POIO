@@ -1,14 +1,13 @@
-版本：POIO 0.8.8
-平台：macOS Apple Silicon
-安装包：DMG / ZIP（未签名）
+版本：POIO 1.0.0 正式版
+平台：Windows x64 / macOS Apple Silicon
+安装包：Windows Setup EXE / macOS DMG 与 ZIP
 
-POIO 0.8.8 完善未签名 macOS 客户端的在线更新体验。
+POIO 1.0.0 正式发布。
 
-- 只对已完成大小与 SHA-512 校验的 POIO 更新 DMG 自动移除 quarantine 属性。
-- 不使用管理员权限，不关闭 Gatekeeper，也不修改系统或其他应用的安全属性。
-- DMG 打开后自动退出 POIO，方便覆盖“应用程序”中的旧版本。
-- 首次从浏览器下载安装仍遵循 macOS 的安全确认流程。
+- 点击“共享屏幕”后立即显示选择窗口，不再等待来源枚举完成。
+- Windows 与 macOS 并行读取 Electron 和原生共享来源，降低首次等待时间。
+- 减少无用图标与缩略图编码开销，并加入短时来源缓存。
+- 增加共享来源加载状态、失败提示与重新加载入口。
+- 包含 Mumble 原生语音、低延迟屏幕共享、频道聊天、社区管理和在线更新。
 
-文件校验：
-- DMG SHA-256：`95A7311AAEF915551459A6801E9E58857DB7C5A33937052E55EEE1CC1D15D4EB`
-- ZIP SHA-256：`CE511742E63E73E4E7D0163B9988376723ACD5594F2FBBF5C84E8B29587EDD89`
+安装包的 SHA-256 校验值将在构建完成后写入 GitHub Release。
