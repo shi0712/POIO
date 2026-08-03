@@ -647,9 +647,28 @@ async function downloadMacDmgUpdate() {
   }
 }
 
+function clearDownloadedMacQuarantine(file:string) {
+  return new Promise<void>((resolve,reject)=>{
+    if(process.platform!=='darwin'){resolve();return}
+    const child=spawn('/usr/bin/xattr',['-d','com.apple.quarantine',file],{
+      windowsHide:true,
+      stdio:['ignore','ignore','pipe'],
+    });
+    let stderr='';
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data',(chunk:string)=>{if(stderr.length<8192)stderr+=chunk});
+    child.once('error',reject);
+    child.once('exit',code=>{
+      if(code===0||/no such xattr/i.test(stderr)){resolve();return}
+      reject(new Error(stderr.trim()||`xattr 退出码 ${code??'未知'}`));
+    });
+  });
+}
+
 async function installDownloadedMacUpdate() {
   const file=downloadedMacDmgPath;
   if(!file||!existsSync(file))return publishUpdateStatus({...appUpdateStatus,state:'error',message:'找不到已下载的 DMG，请重新下载'});
+  try{await clearDownloadedMacQuarantine(file)}catch(error){return publishUpdateStatus({...appUpdateStatus,state:'error',message:`无法移除更新包隔离属性：${error instanceof Error?error.message:String(error)}`})}
   const error=await shell.openPath(file);
   if(error)return publishUpdateStatus({...appUpdateStatus,state:'error',message:`无法打开 DMG：${error}`});
   const status=publishUpdateStatus({...appUpdateStatus,state:'downloaded',message:'DMG 已打开，POIO 即将退出；请将新版拖入“应用程序”覆盖安装',installMode:'open-dmg'});
