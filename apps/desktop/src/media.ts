@@ -132,6 +132,10 @@ export class ScreenSession {
     const epoch=this.epoch;
     const transport=this.recvTransport;
     const tag=String(producer.appData?.mediaTag??producer.kind);
+    // Browser voice uses a dedicated media socket so it cannot reset the
+    // screen-sharing transports. Voice tracks are consumed by that engine,
+    // never by the screen stage (which would otherwise play them twice).
+    if(tag==='voice')return;
     if(this.p2pUsers.has(producer.userId)&&(tag==='screen'||tag==='screen-audio'))return;
     if (!transport || transport.closed || this.consumers.has(producer.producerId) || this.closedProducers.has(producer.producerId)) return;
     const info = await request<any>('media:consume',{transportId:transport.id,producerId:producer.producerId,rtpCapabilities:this.device.rtpCapabilities});
@@ -198,12 +202,20 @@ export class ScreenSession {
         console.warn('Native screen sharing unavailable, falling back to Chromium capture',error);
       }
     }
-    const constraints:any = {
-      audio:includeAudio?{mandatory:{chromeMediaSource:'desktop',chromeMediaSourceId:sourceId}}:false,
-      video:{mandatory:{chromeMediaSource:'desktop',chromeMediaSourceId:sourceId,maxFrameRate:setting.fps}}
-    };
-    if (profile !== 'original') Object.assign(constraints.video.mandatory,{maxWidth:setting.width,maxHeight:setting.height});
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    const browserCapture=window.echodeck?.platform==='web'||sourceId==='browser-picker';
+    let stream:MediaStream;
+    if(browserCapture){
+      const video:any={frameRate:{ideal:setting.fps,max:setting.fps}};
+      if(profile!=='original')Object.assign(video,{width:{ideal:setting.width,max:setting.width},height:{ideal:setting.height,max:setting.height}});
+      stream=await navigator.mediaDevices.getDisplayMedia({video,audio:includeAudio});
+    }else{
+      const constraints:any = {
+        audio:includeAudio?{mandatory:{chromeMediaSource:'desktop',chromeMediaSourceId:sourceId}}:false,
+        video:{mandatory:{chromeMediaSource:'desktop',chromeMediaSourceId:sourceId,maxFrameRate:setting.fps}}
+      };
+      if (profile !== 'original') Object.assign(constraints.video.mandatory,{maxWidth:setting.width,maxHeight:setting.height});
+      stream=await navigator.mediaDevices.getUserMedia(constraints);
+    }
     const track = stream.getVideoTracks()[0];
     if(!track){stream.getTracks().forEach(item=>item.stop());throw new Error('没有获得可共享的视频画面')}
     track.contentHint = profile==='smooth'||profile==='fps'?'motion':'detail';

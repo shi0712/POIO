@@ -10,6 +10,7 @@ declare global {
   type DesktopPreferences = { closeToTray:boolean;launchAtLogin:boolean;muteShortcut:VoiceShortcut;pushToTalkEnabled:boolean;pushToTalkShortcut:VoiceShortcut };
   interface Window {
     echodeck?: {
+      platform?: 'desktop'|'web';
       window: { minimize(): Promise<void>; maximize(): Promise<void>; close(): Promise<void> };
       getDesktopSources(): Promise<Array<{id:string;nativeId?:string;name:string;thumbnail:string;appIcon?:string}>>;
       captureScreenshot(): Promise<{dataUrl:string;width:number;height:number;displayName:string}>;
@@ -29,7 +30,7 @@ declare global {
       tray: { onToggleMute(callback:()=>void):()=>void;onLeaveVoice(callback:()=>void):()=>void };
       update: { status():Promise<AppUpdateStatus>;check():Promise<AppUpdateStatus>;download():Promise<AppUpdateStatus>;install():Promise<void>;onStatus(callback:(status:AppUpdateStatus)=>void):()=>void };
       mumble: {
-        connect(connection:{host:string;port:number;username:string;password:string;channelName:string}):Promise<string>;
+        connect(connection:{host:string;port:number;username:string;password:string;channelName:string;channelId?:string}):Promise<string>;
         state():Promise<MumbleRuntimeState>;
         onState(callback:(status:MumbleRuntimeState)=>void):()=>void;
         onControls(callback:(status:{muted:boolean;deafened:boolean;transmitting:boolean;pushToTalkActive:boolean})=>void):()=>void;

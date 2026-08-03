@@ -1,0 +1,10 @@
+html.web-runtime .titlebar{-webkit-app-region:no-drag}
+html.web-runtime .titlebar>.drag-region{pointer-events:none}
+html.web-runtime .titlebar>button:not(.title-update){display:none}
+html.web-runtime .title-brand em::after{content:" · WEB"}
+html.web-runtime .modal-backdrop,
+html.web-runtime .image-preview-backdrop{inset:38px 0 0}
+@media(max-width:820px){
+  html.web-runtime body{overflow:auto}
+  html.web-runtime .app-shell{min-width:920px}
+}

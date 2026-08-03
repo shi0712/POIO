@@ -65,3 +65,22 @@ https://{$NIZ_PUBLIC_IP} {
     reverse_proxy 127.0.0.1:17890
   }
 }
+
+# Browser client and its API/WebSocket share one origin. Keeping /poio for the
+# backend preserves compatibility with every existing POIO server route.
+poio.sjwnb.online {
+  encode zstd gzip
+  handle /poio {
+    uri strip_prefix /poio
+    reverse_proxy 127.0.0.1:17920
+  }
+  handle /poio/* {
+    uri strip_prefix /poio
+    reverse_proxy 127.0.0.1:17920
+  }
+  handle {
+    root * /srv/niz-download/poio-web/current
+    try_files {path} /index.html
+    file_server
+  }
+}
