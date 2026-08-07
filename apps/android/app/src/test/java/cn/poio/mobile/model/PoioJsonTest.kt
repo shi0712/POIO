@@ -81,4 +81,29 @@ class PoioJsonTest {
         assertEquals(listOf("u1", "u2"), message.reactions.first().userIds)
         assertEquals(2, message.reactions.first().count)
     }
+
+    @Test
+    fun parsesDirectMessagesAndConversationUnreadCount() {
+        val message = PoioJson.directMessage(JSONObject(
+            """{
+              "id":"dm1","senderId":"u2","recipientId":"u1","body":"私聊你好","createdAt":1784740000002,
+              "username":"朋友","avatarUrl":"/uploads/friend.gif","attachmentUrl":"/uploads/截图.png",
+              "attachmentName":"截图.png","attachmentSize":4096,"attachmentMime":"image/png"
+            }""".trimIndent(),
+        ))
+        val conversation = PoioJson.directConversation(JSONObject(
+            """{
+              "user":{"id":"u2","username":"朋友"},
+              "lastMessage":{"id":"dm1","body":"私聊你好","createdAt":1784740000002,"senderId":"u2"},
+              "unreadCount":3
+            }""".trimIndent(),
+        ))
+
+        assertEquals("朋友", message.username)
+        assertEquals("截图.png", message.attachmentName)
+        assertEquals(4096L, message.attachmentSize)
+        assertEquals("u2", conversation.user.id)
+        assertEquals("私聊你好", conversation.lastBody)
+        assertEquals(3, conversation.unreadCount)
+    }
 }

@@ -12,6 +12,16 @@ export type ChatMessage = {
   attachmentUrl?:string;attachmentName?:string;attachmentSize?:number;attachmentMime?:string;
   reply?:ChatReply;reactions:ChatReaction[];
 };
+export type DirectMessage = {
+  id:string;senderId:string;recipientId:string;body:string;createdAt:number;
+  username:string;avatarUrl?:string;
+  attachmentUrl?:string;attachmentName?:string;attachmentSize?:number;attachmentMime?:string;
+};
+export type DirectConversation = {
+  user:User;
+  lastMessage:{id:string;body:string;createdAt:number;attachmentName?:string;senderId:string};
+  unreadCount:number;
+};
 type Reply<T> = {ok:true;value:T}|{ok:false;error:string};
 
 export const serverUrl = import.meta.env.VITE_SERVER_URL ?? 'https://115.159.222.29/poio';

@@ -43,6 +43,29 @@ db.exec(`
     attachment_url TEXT, attachment_name TEXT, attachment_size INTEGER, attachment_mime TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_messages_channel_time ON messages(channel_id, created_at);
+  CREATE TABLE IF NOT EXISTS direct_messages (
+    id TEXT PRIMARY KEY,
+    sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    recipient_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    attachment_url TEXT,
+    attachment_name TEXT,
+    attachment_size INTEGER,
+    attachment_mime TEXT,
+    CHECK(sender_id <> recipient_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_direct_messages_sender_recipient_time
+    ON direct_messages(sender_id,recipient_id,created_at);
+  CREATE INDEX IF NOT EXISTS idx_direct_messages_recipient_sender_time
+    ON direct_messages(recipient_id,sender_id,created_at);
+  CREATE TABLE IF NOT EXISTS direct_message_reads (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    peer_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    last_read_at INTEGER NOT NULL,
+    PRIMARY KEY(user_id,peer_id),
+    CHECK(user_id <> peer_id)
+  );
 `);
 const userColumns=db.prepare('PRAGMA table_info(users)').all() as Array<{name:string}>;
 if(!userColumns.some(column=>column.name==='avatar_url'))db.exec('ALTER TABLE users ADD COLUMN avatar_url TEXT');
@@ -467,6 +490,109 @@ export function mentionedUserIds(channelId:string,body:string) {
     }
     return false;
   }).map(member=>member.id);
+}
+
+function requireDirectMessageAccess(userId:string,peerId:string) {
+  if(userId===peerId)throw new Error('不能给自己发送私聊消息');
+  const common=db.prepare(`SELECT a.space_id AS spaceId
+    FROM memberships a JOIN memberships b ON b.space_id=a.space_id
+    WHERE a.user_id=? AND b.user_id=? LIMIT 1`).get(userId,peerId) as {spaceId:string}|undefined;
+  if(!common)throw new Error('只能与同一社区的成员私聊');
+  const peer=publicUserById(peerId);
+  if(!peer)throw new Error('成员不存在');
+  return peer;
+}
+
+const directMessageSelect=`SELECT d.id,d.sender_id AS senderId,d.recipient_id AS recipientId,
+  d.body,d.created_at AS createdAt,d.attachment_url AS attachmentUrl,
+  d.attachment_name AS attachmentName,d.attachment_size AS attachmentSize,
+  d.attachment_mime AS attachmentMime,u.username,u.avatar_url AS avatarUrl
+  FROM direct_messages d JOIN users u ON u.id=d.sender_id`;
+
+function hydrateDirectMessage(row:any) {
+  return {
+    id:row.id,
+    senderId:row.senderId,
+    recipientId:row.recipientId,
+    body:row.body,
+    createdAt:row.createdAt,
+    username:row.username,
+    avatarUrl:row.avatarUrl??undefined,
+    attachmentUrl:row.attachmentUrl??undefined,
+    attachmentName:normalizeAttachmentName(row.attachmentName)??undefined,
+    attachmentSize:row.attachmentSize??undefined,
+    attachmentMime:row.attachmentMime??undefined,
+  };
+}
+
+export function directMessages(userId:string,peerId:string) {
+  requireDirectMessageAccess(userId,peerId);
+  const rows=db.prepare(`${directMessageSelect}
+    WHERE (d.sender_id=? AND d.recipient_id=?) OR (d.sender_id=? AND d.recipient_id=?)
+    ORDER BY d.created_at DESC,d.rowid DESC LIMIT 200`).all(userId,peerId,peerId,userId).reverse();
+  return rows.map(hydrateDirectMessage);
+}
+
+export function createDirectMessage(
+  user:PublicUser,
+  peerId:string,
+  body:string,
+  attachment?:{url:string;name:string;size:number;mime:string},
+) {
+  requireDirectMessageAccess(user.id,peerId);
+  if(!body&& !attachment)throw new Error('消息不能为空');
+  const id=nanoid();
+  const createdAt=Date.now();
+  const attachmentName=normalizeAttachmentName(attachment?.name);
+  db.prepare(`INSERT INTO direct_messages(
+    id,sender_id,recipient_id,body,created_at,attachment_url,attachment_name,attachment_size,attachment_mime
+  ) VALUES(?,?,?,?,?,?,?,?,?)`).run(
+    id,user.id,peerId,body,createdAt,attachment?.url??null,attachmentName??null,
+    attachment?.size??null,attachment?.mime??null,
+  );
+  const row=db.prepare(`${directMessageSelect} WHERE d.id=?`).get(id);
+  return hydrateDirectMessage(row);
+}
+
+export function markDirectMessagesRead(userId:string,peerId:string) {
+  requireDirectMessageAccess(userId,peerId);
+  const latest=db.prepare(`SELECT COALESCE(MAX(created_at),0) AS value FROM direct_messages
+    WHERE sender_id=? AND recipient_id=?`).get(peerId,userId) as {value:number};
+  const lastReadAt=Math.max(Date.now(),latest.value);
+  db.prepare(`INSERT INTO direct_message_reads(user_id,peer_id,last_read_at) VALUES(?,?,?)
+    ON CONFLICT(user_id,peer_id) DO UPDATE SET last_read_at=MAX(last_read_at,excluded.last_read_at)`)
+    .run(userId,peerId,lastReadAt);
+  return {peerId,lastReadAt};
+}
+
+export function directConversations(userId:string) {
+  const rows=db.prepare(`SELECT u.id,u.username,u.avatar_url AS avatarUrl,
+    last.id AS lastMessageId,last.body AS lastBody,last.created_at AS lastCreatedAt,
+    last.attachment_name AS lastAttachmentName,last.sender_id AS lastSenderId,
+    (SELECT COUNT(*) FROM direct_messages unread
+      WHERE unread.sender_id=u.id AND unread.recipient_id=?
+        AND unread.created_at>COALESCE((SELECT r.last_read_at FROM direct_message_reads r
+          WHERE r.user_id=? AND r.peer_id=u.id),0)) AS unreadCount
+    FROM users u
+    JOIN direct_messages last ON last.id=(SELECT candidate.id FROM direct_messages candidate
+      WHERE (candidate.sender_id=? AND candidate.recipient_id=u.id)
+         OR (candidate.sender_id=u.id AND candidate.recipient_id=?)
+      ORDER BY candidate.created_at DESC,candidate.rowid DESC LIMIT 1)
+    WHERE u.id<>?
+      AND EXISTS(SELECT 1 FROM memberships mine JOIN memberships theirs ON theirs.space_id=mine.space_id
+        WHERE mine.user_id=? AND theirs.user_id=u.id)
+    ORDER BY last.created_at DESC`).all(userId,userId,userId,userId,userId,userId) as Array<any>;
+  return rows.map(row=>({
+    user:{id:row.id,username:row.username,avatarUrl:row.avatarUrl??undefined},
+    lastMessage:{
+      id:row.lastMessageId,
+      body:row.lastBody,
+      createdAt:row.lastCreatedAt,
+      attachmentName:normalizeAttachmentName(row.lastAttachmentName)??undefined,
+      senderId:row.lastSenderId,
+    },
+    unreadCount:Number(row.unreadCount)||0,
+  }));
 }
 
 export function channelSpaceId(channelId:string) {

@@ -14,6 +14,7 @@ import cn.poio.mobile.voice.MicrophoneTestState
 import cn.poio.mobile.voice.VoiceDeviceState
 import cn.poio.mobile.voice.VoiceState
 import cn.poio.mobile.voice.leaveVoiceSafely
+import cn.poio.mobile.model.User
 import cn.poio.mobile.update.AndroidUpdateInfo
 import cn.poio.mobile.update.AndroidUpdateManager
 import cn.poio.mobile.update.AndroidUpdateState
@@ -112,6 +113,10 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
     override fun reactMessage(messageId: String, emoji: String) { viewModelScope.launch { repository.reactMessage(messageId, emoji) } }
     override fun searchMessages(query: String) { viewModelScope.launch { repository.searchMessages(query) } }
     override fun clearMessageSearch() = repository.clearMessageSearch()
+    override fun openDirectMessage(user: User) { viewModelScope.launch { repository.openDirectMessage(user) } }
+    override fun closeDirectMessage() = repository.closeDirectMessage()
+    override fun sendDirectMessage(body: String) { viewModelScope.launch { repository.sendDirectMessage(body) } }
+    override fun sendDirectAttachment(uri: Uri, body: String) { viewModelScope.launch { repository.sendDirectAttachment(uri, body) } }
     override fun updateAvatar(uri: Uri) { viewModelScope.launch { repository.updateAvatar(uri) } }
     override fun updateLeaveSound(uri: Uri?) {
         viewModelScope.launch {
@@ -291,6 +296,10 @@ interface PoioActions {
     fun reactMessage(messageId: String, emoji: String)
     fun searchMessages(query: String)
     fun clearMessageSearch()
+    fun openDirectMessage(user: User)
+    fun closeDirectMessage()
+    fun sendDirectMessage(body: String)
+    fun sendDirectAttachment(uri: Uri, body: String)
     fun updateAvatar(uri: Uri)
     fun updateLeaveSound(uri: Uri?)
     fun testLeaveSound()

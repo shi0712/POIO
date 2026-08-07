@@ -148,6 +148,7 @@ import cn.poio.mobile.data.PoioState
 import cn.poio.mobile.model.Channel
 import cn.poio.mobile.model.ChannelKind
 import cn.poio.mobile.model.ChatMessage
+import cn.poio.mobile.model.DirectMessage
 import cn.poio.mobile.model.Space
 import cn.poio.mobile.model.User
 import cn.poio.mobile.voice.VoiceState
@@ -365,7 +366,18 @@ private fun HomeScreen(
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Box(Modifier.fillMaxSize()) {
-        if (!channelOpen) {
+        if (state.directPeer != null) {
+            DirectMessageScreen(
+                peer = state.directPeer,
+                currentUserId = state.user?.id,
+                messages = state.directMessages,
+                busy = state.busy,
+                onBack = actions::closeDirectMessage,
+                onSend = actions::sendDirectMessage,
+                onAttach = actions::sendDirectAttachment,
+                modifier = Modifier.padding(padding),
+            )
+        } else if (!channelOpen) {
             MobileCommunityScreen(
                 state = state,
                 voiceState = voiceState,
@@ -377,6 +389,7 @@ private fun HomeScreen(
                 onInvite = actions::createSpaceInvite,
                 onSettings = { settingsDialog = true },
                 onProfile = { accountSheet = true },
+                onDirectMessage = actions::openDirectMessage,
                 modifier = Modifier.padding(padding),
             )
         } else {
@@ -709,6 +722,7 @@ private fun HomeScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MobileCommunityScreen(
     state: PoioState,
@@ -721,9 +735,11 @@ private fun MobileCommunityScreen(
     onInvite: () -> Unit,
     onSettings: () -> Unit,
     onProfile: () -> Unit,
+    onDirectMessage: (User) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val space = state.selectedSpace
+    var membersOpen by remember { mutableStateOf(false) }
     val currentVoiceChannel = state.voiceChannelId?.let { channelId ->
         state.spaces.asSequence().flatMap { it.channels.asSequence() }.firstOrNull { it.id == channelId }
     }
@@ -802,6 +818,16 @@ private fun MobileCommunityScreen(
                     Spacer(Modifier.width(8.dp))
                     Text("邀请成员")
                 }
+                FilledTonalButton(
+                    onClick = { membersOpen = true },
+                    enabled = state.communityMembers.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                ) {
+                    Icon(Icons.Default.Groups, null)
+                    Spacer(Modifier.width(8.dp))
+                    val unreadDirect = state.directConversations.sumOf { it.unreadCount }
+                    Text("社区成员 · ${state.communityMembers.size}" + if (unreadDirect > 0) " · ${unreadDirect.coerceAtMost(99)} 条私聊" else "")
+                }
                 Spacer(Modifier.height(20.dp))
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     val textChannels = space?.channels.orEmpty().filter { it.kind == ChannelKind.TEXT }
@@ -845,6 +871,51 @@ private fun MobileCommunityScreen(
                             Text(currentVoiceChannel.name, fontWeight = FontWeight.Bold)
                         }
                         Text("返回", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+        if (membersOpen) {
+            ModalBottomSheet(onDismissRequest = { membersOpen = false }) {
+                Column(
+                    Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    Text("社区成员", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("选择成员发起一对一私聊", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    Spacer(Modifier.height(4.dp))
+                    state.communityMembers.forEach { member ->
+                        val self = member.id == state.user?.id
+                        val unread = state.directConversations.firstOrNull { it.user.id == member.id }?.unreadCount ?: 0
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .55f))
+                                .clickable(enabled = !self) {
+                                    membersOpen = false
+                                    onDirectMessage(member)
+                                }.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            UserAvatar(member.avatarUrl, member.username, 38.dp)
+                            Column(Modifier.weight(1f)) {
+                                Text(member.username + if (self) "（你）" else "", fontWeight = FontWeight.Bold)
+                                Text(
+                                    if (member.role == "owner") "社区拥有者" else if (self) "当前账号" else "点击发送私聊",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp,
+                                )
+                            }
+                            if (unread > 0) {
+                                Text(
+                                    if (unread > 99) "99+" else unread.toString(),
+                                    Modifier.background(MaterialTheme.colorScheme.error, RoundedCornerShape(12.dp)).padding(horizontal = 8.dp, vertical = 3.dp),
+                                    color = MaterialTheme.colorScheme.onError,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            } else if (!self) Icon(Icons.Default.ChatBubbleOutline, "私聊")
+                        }
                     }
                 }
             }
@@ -1100,6 +1171,172 @@ private fun CommunityDrawer(
             }
             FilledTonalButton(onClick = onJoinSpace, Modifier.fillMaxWidth()) { Icon(Icons.Default.Groups, null); Spacer(Modifier.width(8.dp)); Text("加入社区") }
             TextButton(onClick = onLogout, Modifier.fillMaxWidth()) { Icon(Icons.AutoMirrored.Filled.Logout, null); Spacer(Modifier.width(8.dp)); Text("退出登录") }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DirectMessageScreen(
+    peer: User,
+    currentUserId: String?,
+    messages: List<DirectMessage>,
+    busy: Boolean,
+    onBack: () -> Unit,
+    onSend: (String) -> Unit,
+    onAttach: (android.net.Uri, String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var body by rememberSaveable(peer.id) { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            onAttach(uri, body)
+            body = ""
+        }
+    }
+    LaunchedEffect(messages.lastOrNull()?.id) {
+        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    }
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets(0),
+        topBar = {
+            TopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        UserAvatar(peer.avatarUrl, peer.username, 36.dp)
+                        Column {
+                            Text(peer.username, fontWeight = FontWeight.Bold)
+                            Text("社区成员私聊 · 仅双方可见", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
+                        }
+                    }
+                },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回社区") } },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
+            )
+        },
+        bottomBar = {
+            Row(
+                Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)
+                    .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                IconButton(
+                    onClick = { filePicker.launch(arrayOf("image/*", "application/*", "text/*", "audio/*", "video/*")) },
+                    enabled = !busy,
+                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)),
+                ) { Icon(Icons.Default.AttachFile, "发送图片或文件") }
+                OutlinedTextField(
+                    value = body,
+                    onValueChange = { body = it.take(4000) },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("私聊 ${peer.username}") },
+                    maxLines = 5,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = {
+                        if (body.isNotBlank()) {
+                            onSend(body)
+                            body = ""
+                        }
+                    }),
+                )
+                IconButton(
+                    onClick = { onSend(body); body = "" },
+                    enabled = body.isNotBlank() && !busy,
+                    modifier = Modifier.background(MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp)),
+                ) { Icon(Icons.AutoMirrored.Filled.Send, "发送", tint = MaterialTheme.colorScheme.onPrimary) }
+            }
+        },
+    ) { contentPadding ->
+        if (messages.isEmpty()) {
+            Column(
+                Modifier.fillMaxSize().padding(contentPadding).padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Icon(
+                    Icons.Default.ChatBubbleOutline,
+                    null,
+                    Modifier.size(58.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(20.dp)).padding(15.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.height(14.dp))
+                Text("开始与 ${peer.username} 私聊", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("支持文字、图片和最大 50 MB 的文件", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+            }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().padding(contentPadding),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                items(messages, key = DirectMessage::id) { message ->
+                    DirectMessageCard(message, own = message.senderId == currentUserId)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DirectMessageCard(message: DirectMessage, own: Boolean) {
+    val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(13.dp))
+            .background(if (own) MaterialTheme.colorScheme.primary.copy(alpha = .06f) else Color.Transparent)
+            .padding(horizontal = 7.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        UserAvatar(message.avatarUrl, message.username, 36.dp)
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text(if (own) "你" else message.username, fontWeight = FontWeight.Bold)
+                Text(
+                    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(message.createdAt)),
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.weight(1f))
+                IconButton(
+                    onClick = {
+                        val text = message.body.takeIf(String::isNotBlank) ?: message.attachmentUrl ?: message.attachmentName.orEmpty()
+                        context.getSystemService(ClipboardManager::class.java)
+                            .setPrimaryClip(ClipData.newPlainText("POIO 私聊", text))
+                        Toast.makeText(context, "消息已复制", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.size(30.dp),
+                ) { Icon(Icons.Default.ContentCopy, "复制消息", Modifier.size(17.dp)) }
+            }
+            if (message.body.isNotBlank()) MarkdownMessage(message.body, Modifier.padding(top = 3.dp))
+            val attachmentUrl = message.attachmentUrl?.let(::poioAssetUrl)
+            if (attachmentUrl != null && message.attachmentMime?.startsWith("image/") == true) {
+                AsyncImage(
+                    model = attachmentUrl,
+                    contentDescription = message.attachmentName ?: "私聊图片",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 130.dp, max = 320.dp).padding(top = 7.dp)
+                        .clip(RoundedCornerShape(12.dp)).background(Color.Black).clickable { uriHandler.openUri(attachmentUrl) },
+                )
+            } else if (attachmentUrl != null) {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 7.dp).clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant).clickable { uriHandler.openUri(attachmentUrl) }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(Icons.Default.Download, null, tint = MaterialTheme.colorScheme.secondary)
+                    Column(Modifier.weight(1f)) {
+                        Text(message.attachmentName ?: "附件", maxLines = 2)
+                        message.attachmentSize?.let { Text(formatBytes(it), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                }
+            }
         }
     }
 }

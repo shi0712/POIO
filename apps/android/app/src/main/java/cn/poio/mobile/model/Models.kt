@@ -44,6 +44,27 @@ data class ChatMessage(
     val reply: ChatReply? = null,
     val reactions: List<ChatReaction> = emptyList(),
 )
+data class DirectMessage(
+    val id: String,
+    val senderId: String,
+    val recipientId: String,
+    val body: String,
+    val createdAt: Long,
+    val username: String,
+    val avatarUrl: String? = null,
+    val attachmentUrl: String? = null,
+    val attachmentName: String? = null,
+    val attachmentSize: Long? = null,
+    val attachmentMime: String? = null,
+)
+data class DirectConversation(
+    val user: User,
+    val lastBody: String,
+    val lastCreatedAt: Long,
+    val lastAttachmentName: String? = null,
+    val lastSenderId: String,
+    val unreadCount: Int,
+)
 data class UploadedAttachment(
     val url: String,
     val name: String,
@@ -115,6 +136,32 @@ object PoioJson {
         count = value.optInt("count"),
         userIds = value.optJSONArray("userIds").strings(),
     )
+
+    fun directMessage(value: JSONObject) = DirectMessage(
+        id = value.getString("id"),
+        senderId = value.getString("senderId"),
+        recipientId = value.getString("recipientId"),
+        body = value.optString("body"),
+        createdAt = value.getLong("createdAt"),
+        username = value.getString("username"),
+        avatarUrl = value.nullableString("avatarUrl"),
+        attachmentUrl = value.nullableString("attachmentUrl"),
+        attachmentName = value.nullableString("attachmentName"),
+        attachmentSize = value.takeIf { it.has("attachmentSize") && !it.isNull("attachmentSize") }?.getLong("attachmentSize"),
+        attachmentMime = value.nullableString("attachmentMime"),
+    )
+
+    fun directConversation(value: JSONObject): DirectConversation {
+        val last = value.getJSONObject("lastMessage")
+        return DirectConversation(
+            user = user(value.getJSONObject("user")),
+            lastBody = last.optString("body"),
+            lastCreatedAt = last.getLong("createdAt"),
+            lastAttachmentName = last.nullableString("attachmentName"),
+            lastSenderId = last.getString("senderId"),
+            unreadCount = value.optInt("unreadCount"),
+        )
+    }
 
     fun auth(value: JSONObject) = AuthPayload(
         token = value.getString("token"),

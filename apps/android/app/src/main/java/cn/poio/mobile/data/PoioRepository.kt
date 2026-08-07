@@ -7,6 +7,8 @@ import cn.poio.mobile.BuildConfig
 import cn.poio.mobile.model.AuthPayload
 import cn.poio.mobile.model.Channel
 import cn.poio.mobile.model.ChatMessage
+import cn.poio.mobile.model.DirectConversation
+import cn.poio.mobile.model.DirectMessage
 import cn.poio.mobile.model.PoioJson
 import cn.poio.mobile.model.ServerCapabilities
 import cn.poio.mobile.model.Space
@@ -50,6 +52,10 @@ data class PoioState(
     val capabilities: ServerCapabilities? = null,
     val voiceChannelId: String? = null,
     val voiceMembers: Map<String, List<User>> = emptyMap(),
+    val communityMembers: List<User> = emptyList(),
+    val directConversations: List<DirectConversation> = emptyList(),
+    val directPeer: User? = null,
+    val directMessages: List<DirectMessage> = emptyList(),
     val inviteCode: String? = null,
     /** Increments only after this Socket.IO connection has authenticated. */
     val authenticatedConnectionGeneration: Long = 0,
@@ -100,12 +106,40 @@ class PoioRepository(
                 )
             }
         }
+        client.on("dm:message") { args ->
+            val value = args.firstOrNull() as? JSONObject ?: return@on
+            val message = runCatching { PoioJson.directMessage(value) }.getOrNull() ?: return@on
+            val current = mutableState.value
+            val currentUserId = current.user?.id ?: return@on
+            val peerId = if (message.senderId == currentUserId) message.recipientId else message.senderId
+            mutableState.value = if (current.directPeer?.id == peerId) {
+                current.copy(
+                    directMessages = if (current.directMessages.any { it.id == message.id }) current.directMessages else current.directMessages + message,
+                )
+            } else current
+            scope.launch {
+                if (message.senderId != currentUserId && mutableState.value.directPeer?.id == peerId) {
+                    runCatching { client.request("dm:read", JSONObject().put("peerId", peerId)) }
+                }
+                refreshDirectConversations()
+            }
+        }
         client.on("channel:created") { args ->
             val value = args.firstOrNull() as? JSONObject ?: return@on
             val channel = runCatching { PoioJson.channel(value) }.getOrNull() ?: return@on
             mutableState.value = mutableState.value.copy(spaces = mutableState.value.spaces.map { space ->
                 if (space.id == channel.spaceId && space.channels.none { it.id == channel.id }) space.copy(channels = space.channels + channel) else space
             })
+        }
+        client.on("space:memberJoined") { args ->
+            val value = args.firstOrNull() as? JSONObject ?: return@on
+            val spaceId = value.optString("spaceId")
+            if (spaceId == mutableState.value.selectedSpaceId) scope.launch { loadCommunityMembers(spaceId) }
+        }
+        client.on("space:memberRemoved") { args ->
+            val value = args.firstOrNull() as? JSONObject ?: return@on
+            val spaceId = value.optString("spaceId")
+            if (spaceId == mutableState.value.selectedSpaceId) scope.launch { loadCommunityMembers(spaceId) }
         }
         client.on("voice:presence") { args ->
             val value = args.firstOrNull() as? JSONObject ?: return@on
@@ -177,7 +211,47 @@ class PoioRepository(
             messages = emptyList(),
             messageSearchResults = emptyList(),
         )
+        loadCommunityMembers(space.id)
         mutableState.value.selectedChannel?.let { selectChannel(it.id) }
+    }
+
+    suspend fun openDirectMessage(peer: User) = guarded(showBusy = false) {
+        if (peer.id == mutableState.value.user?.id) return@guarded
+        mutableState.value = mutableState.value.copy(directPeer = peer, directMessages = emptyList())
+        val history = client.request("dm:history", JSONObject().put("peerId", peer.id)) as JSONArray
+        client.request("dm:read", JSONObject().put("peerId", peer.id))
+        mutableState.value = mutableState.value.copy(
+            directMessages = history.objects().map(PoioJson::directMessage),
+            directConversations = mutableState.value.directConversations.map {
+                if (it.user.id == peer.id) it.copy(unreadCount = 0) else it
+            },
+        )
+    }
+
+    fun closeDirectMessage() {
+        mutableState.value = mutableState.value.copy(directPeer = null, directMessages = emptyList())
+    }
+
+    suspend fun sendDirectMessage(body: String) = guarded(showBusy = false) {
+        val peerId = mutableState.value.directPeer?.id ?: return@guarded
+        if (body.isBlank()) return@guarded
+        client.request("dm:send", JSONObject().put("peerId", peerId).put("body", body.trim()))
+    }
+
+    suspend fun sendDirectAttachment(uri: Uri, body: String) = guarded {
+        val peerId = mutableState.value.directPeer?.id ?: return@guarded
+        val attachment = uploader.upload(uri)
+        client.request(
+            "dm:send",
+            JSONObject().put("peerId", peerId).put("body", body.trim()).put(
+                "attachment",
+                JSONObject()
+                    .put("url", attachment.url)
+                    .put("name", attachment.name)
+                    .put("size", attachment.size)
+                    .put("mime", attachment.mime),
+            ),
+        )
     }
 
     suspend fun selectChannel(channelId: String) = guarded(showBusy = false) {
@@ -421,6 +495,26 @@ class PoioRepository(
         }
     }
 
+    private suspend fun loadCommunityMembers(spaceId: String) {
+        val value = client.request("space:members", JSONObject().put("spaceId", spaceId)) as JSONArray
+        if (mutableState.value.selectedSpaceId == spaceId) {
+            val members = value.objects().map(PoioJson::user)
+            val memberIds = members.mapTo(mutableSetOf(), User::id)
+            mutableState.value = mutableState.value.copy(
+                communityMembers = members,
+                directPeer = mutableState.value.directPeer?.takeIf { it.id in memberIds },
+            )
+        }
+    }
+
+    private suspend fun refreshDirectConversations() {
+        if (!mutableState.value.authenticated) return
+        val value = client.request("dm:list") as JSONArray
+        mutableState.value = mutableState.value.copy(
+            directConversations = value.objects().map(PoioJson::directConversation),
+        )
+    }
+
     private suspend fun applyAuth(payload: AuthPayload) {
         session.writeToken(payload.token)
         val current = mutableState.value
@@ -439,6 +533,8 @@ class PoioRepository(
             error = null,
         )
         mutableState.value.selectedChannelId?.let { selectChannel(it) }
+        selectedSpace?.id?.let { loadCommunityMembers(it) }
+        refreshDirectConversations()
     }
 
     private fun applyUserUpdate(user: User) {
@@ -450,6 +546,14 @@ class PoioRepository(
             },
             voiceMembers = current.voiceMembers.mapValues { (_, members) ->
                 members.map { member -> if (member.id == user.id) user else member }
+            },
+            communityMembers = current.communityMembers.map { member -> if (member.id == user.id) user.copy(role = member.role) else member },
+            directPeer = if (current.directPeer?.id == user.id) user else current.directPeer,
+            directConversations = current.directConversations.map { conversation ->
+                if (conversation.user.id == user.id) conversation.copy(user = user) else conversation
+            },
+            directMessages = current.directMessages.map { message ->
+                if (message.senderId == user.id) message.copy(username = user.username, avatarUrl = user.avatarUrl) else message
             },
         )
     }
