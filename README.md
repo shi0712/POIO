@@ -4,7 +4,7 @@
 
 <h1 align="center">POIO</h1>
 
-<p align="center">面向朋友与小型社区的 Windows / Android 语音、聊天和低延迟屏幕共享客户端。</p>
+<p align="center">面向朋友与小型社区的 Windows / macOS / Android / Web 语音、聊天、低延迟屏幕共享与社交小游戏平台。</p>
 
 <p align="center">
   <a href="https://115.159.222.29/poio/">下载最新版</a> ·
@@ -12,10 +12,11 @@
   <a href="https://www.modelscope.cn/models/sjw712/POIO/files">ModelScope 镜像</a>
 </p>
 
-> 当前版本：Windows **0.8.2 Preview**、Android **0.1.0-p26**。Windows 在线更新与官网下载均使用 ModelScope；安装包尚未进行代码签名，首次运行时可能显示 SmartScreen 提示。Android 当前提供 arm64 APK。
+> 当前版本：**POIO 1.1.0**，提供 Windows x64、macOS Apple Silicon、Android arm64 与网页版。桌面在线更新和官网下载使用 ModelScope；安装包尚未进行代码签名，首次运行时可能显示系统安全提示。
 
 ## 已实现功能
 
+- POIO 游戏中心：21 点、Mines、社区多人 Crash 与 5×3 霓虹转轴；包含娱乐积分、每日奖励、免费旋转、积分流水和对局记录。所有下注与结算均由服务端判定，每局公布 SHA-256 随机种子摘要并在结束后公开原始种子。娱乐积分不可充值、提现或兑换。
 - 原生 Mumble + Opus 语音链路，支持输入/输出设备切换、麦克风测试、实时音量反馈、静音、关闭声音、挂断与自动重连。
 - Windows 原生全局静音快捷键与按住说话，支持键盘组合键和鼠标侧键，POIO 在托盘后台时仍然生效。
 - Windows 的成员说话动画、麦克风状态和托盘提示直接读取 Mumble 原生发送状态，按键说话模式下不会把未发送的环境音误判为正在说话。

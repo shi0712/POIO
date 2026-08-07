@@ -130,6 +130,17 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
     override fun createSpaceInvite() { viewModelScope.launch { repository.createSpaceInvite() } }
     override fun clearSpaceInvite() = repository.clearSpaceInvite()
     override fun createChannel(name: String, voice: Boolean) { viewModelScope.launch { repository.createChannel(name, voice) } }
+    override fun enterGameCenter(spaceId: String) { viewModelScope.launch { repository.enterGameCenter(spaceId) } }
+    override fun leaveGameCenter() { viewModelScope.launch { repository.leaveGameCenter() } }
+    override fun claimGameDaily() { viewModelScope.launch { repository.claimGameDaily() } }
+    override fun startBlackjack(wager: Long) { viewModelScope.launch { repository.startBlackjack(wager) } }
+    override fun blackjackAction(action: String) { viewModelScope.launch { repository.blackjackAction(action) } }
+    override fun startMines(wager: Long, mineCount: Int) { viewModelScope.launch { repository.startMines(wager, mineCount) } }
+    override fun revealMine(cell: Int) { viewModelScope.launch { repository.revealMine(cell) } }
+    override fun cashoutMines() { viewModelScope.launch { repository.cashoutMines() } }
+    override fun spinSlots(wager: Long, useFreeSpin: Boolean) { viewModelScope.launch { repository.spinSlots(wager, useFreeSpin) } }
+    override fun placeCrashBet(spaceId: String, wager: Long) { viewModelScope.launch { repository.placeCrashBet(spaceId, wager) } }
+    override fun cashoutCrash(spaceId: String) { viewModelScope.launch { repository.cashoutCrash(spaceId) } }
     override fun joinVoice(channelId: String) {
         viewModelScope.launch {
             runCatching {
@@ -308,6 +319,17 @@ interface PoioActions {
     fun createSpaceInvite()
     fun clearSpaceInvite()
     fun createChannel(name: String, voice: Boolean)
+    fun enterGameCenter(spaceId: String)
+    fun leaveGameCenter()
+    fun claimGameDaily()
+    fun startBlackjack(wager: Long)
+    fun blackjackAction(action: String)
+    fun startMines(wager: Long, mineCount: Int)
+    fun revealMine(cell: Int)
+    fun cashoutMines()
+    fun spinSlots(wager: Long, useFreeSpin: Boolean)
+    fun placeCrashBet(spaceId: String, wager: Long)
+    fun cashoutCrash(spaceId: String)
     fun joinVoice(channelId: String)
     fun leaveVoice()
     fun setMuted(muted: Boolean)

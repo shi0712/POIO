@@ -9,6 +9,8 @@ import cn.poio.mobile.model.Channel
 import cn.poio.mobile.model.ChatMessage
 import cn.poio.mobile.model.DirectConversation
 import cn.poio.mobile.model.DirectMessage
+import cn.poio.mobile.model.GameCenterState
+import cn.poio.mobile.model.GameJson
 import cn.poio.mobile.model.PoioJson
 import cn.poio.mobile.model.ServerCapabilities
 import cn.poio.mobile.model.Space
@@ -56,6 +58,7 @@ data class PoioState(
     val directConversations: List<DirectConversation> = emptyList(),
     val directPeer: User? = null,
     val directMessages: List<DirectMessage> = emptyList(),
+    val games: GameCenterState = GameCenterState(),
     val inviteCode: String? = null,
     /** Increments only after this Socket.IO connection has authenticated. */
     val authenticatedConnectionGeneration: Long = 0,
@@ -165,6 +168,18 @@ class PoioRepository(
             val value = args.firstOrNull() as? JSONObject ?: return@on
             val user = runCatching { PoioJson.user(value) }.getOrNull() ?: return@on
             applyUserUpdate(user)
+        }
+        client.on("game:wallet") { args ->
+            val value = args.firstOrNull() as? JSONObject ?: return@on
+            mutableState.value = mutableState.value.copy(
+                games = mutableState.value.games.copy(wallet = GameJson.wallet(value)),
+            )
+        }
+        client.on("game:crash") { args ->
+            val value = args.firstOrNull() as? JSONObject ?: return@on
+            mutableState.value = mutableState.value.copy(
+                games = mutableState.value.games.copy(crash = GameJson.crash(value)),
+            )
         }
         client.connect(
             onConnected = {
@@ -403,6 +418,79 @@ class PoioRepository(
             "channel:create",
             JSONObject().put("spaceId", spaceId).put("name", name.trim()).put("kind", if (voice) "voice" else "text"),
         )
+    }
+
+    suspend fun enterGameCenter(spaceId: String) {
+        mutableState.value = mutableState.value.copy(games = mutableState.value.games.copy(open = true, loading = true))
+        guarded(showBusy = false) {
+            val value = client.request("game:enter", JSONObject().put("spaceId", spaceId)) as JSONObject
+            mutableState.value = mutableState.value.copy(
+                games = GameCenterState(
+                    open = true,
+                    wallet = GameJson.wallet(value.getJSONObject("wallet")),
+                    blackjack = GameJson.blackjack(value.optJSONObject("blackjack")),
+                    mines = GameJson.mines(value.optJSONObject("mines")),
+                    crash = GameJson.crash(value.optJSONObject("crash")),
+                ),
+            )
+        }
+        mutableState.value = mutableState.value.copy(games = mutableState.value.games.copy(loading = false))
+    }
+
+    suspend fun leaveGameCenter() {
+        runCatching { client.request("game:leave", JSONObject()) }
+        mutableState.value = mutableState.value.copy(games = GameCenterState())
+    }
+
+    suspend fun claimGameDaily() = gameRequest("game:daily", JSONObject()) { value ->
+        mutableState.value.games.copy(wallet = GameJson.wallet(value))
+    }
+
+    suspend fun startBlackjack(wager: Long) = gameResponse(
+        "game:blackjack:start", JSONObject().put("wager", wager), "blackjack",
+    )
+
+    suspend fun blackjackAction(action: String) = gameResponse(
+        "game:blackjack:action", JSONObject().put("action", action), "blackjack",
+    )
+
+    suspend fun startMines(wager: Long, mineCount: Int) = gameResponse(
+        "game:mines:start", JSONObject().put("wager", wager).put("mineCount", mineCount), "mines",
+    )
+
+    suspend fun revealMine(cell: Int) = gameResponse("game:mines:reveal", JSONObject().put("cell", cell), "mines")
+    suspend fun cashoutMines() = gameResponse("game:mines:cashout", JSONObject(), "mines")
+
+    suspend fun spinSlots(wager: Long, useFreeSpin: Boolean) = gameRequest(
+        "game:slots:spin", JSONObject().put("wager", wager).put("useFreeSpin", useFreeSpin),
+    ) { value ->
+        mutableState.value.games.copy(
+            wallet = GameJson.wallet(value.getJSONObject("wallet")),
+            slots = GameJson.slot(value.optJSONObject("spin")),
+        )
+    }
+
+    suspend fun placeCrashBet(spaceId: String, wager: Long) = gameResponse(
+        "game:crash:bet", JSONObject().put("spaceId", spaceId).put("wager", wager), "crash",
+    )
+
+    suspend fun cashoutCrash(spaceId: String) = gameResponse(
+        "game:crash:cashout", JSONObject().put("spaceId", spaceId), "crash",
+    )
+
+    private suspend fun gameResponse(event: String, payload: JSONObject, game: String) = gameRequest(event, payload) { value ->
+        val current = mutableState.value.games
+        current.copy(
+            wallet = GameJson.wallet(value.getJSONObject("wallet")),
+            blackjack = if (game == "blackjack") GameJson.blackjack(value.optJSONObject("state")) else current.blackjack,
+            mines = if (game == "mines") GameJson.mines(value.optJSONObject("state")) else current.mines,
+            crash = if (game == "crash") GameJson.crash(value.optJSONObject("state")) else current.crash,
+        )
+    }
+
+    private suspend fun gameRequest(event: String, payload: JSONObject, apply: (JSONObject) -> GameCenterState) = guarded {
+        val value = client.request(event, payload) as JSONObject
+        mutableState.value = mutableState.value.copy(games = apply(value))
     }
 
     suspend fun voiceCredentials(channelId: String): MumbleCredentials {

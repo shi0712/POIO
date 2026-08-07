@@ -78,6 +78,7 @@ import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AlertDialog
@@ -317,6 +318,7 @@ private fun HomeScreen(
     var settingsDialog by remember { mutableStateOf(false) }
     var accountSheet by remember { mutableStateOf(false) }
     var channelOpen by rememberSaveable { mutableStateOf(false) }
+    var gameOpen by rememberSaveable { mutableStateOf(false) }
     var pendingVoiceJoin by remember { mutableStateOf<Channel?>(null) }
     var dismissedUpdateVersion by rememberSaveable { mutableStateOf<Int?>(null) }
     var hasConnectedOnce by rememberSaveable { mutableStateOf(state.connected) }
@@ -366,7 +368,18 @@ private fun HomeScreen(
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Box(Modifier.fillMaxSize()) {
-        if (state.directPeer != null) {
+        if (gameOpen) {
+            GameCenterScreen(
+                state = state.games,
+                spaceId = state.selectedSpaceId.orEmpty(),
+                busy = state.busy,
+                actions = actions,
+                onBack = {
+                    gameOpen = false
+                    actions.leaveGameCenter()
+                },
+            )
+        } else if (state.directPeer != null) {
             DirectMessageScreen(
                 peer = state.directPeer,
                 currentUserId = state.user?.id,
@@ -390,6 +403,10 @@ private fun HomeScreen(
                 onSettings = { settingsDialog = true },
                 onProfile = { accountSheet = true },
                 onDirectMessage = actions::openDirectMessage,
+                onGames = {
+                    state.selectedSpaceId?.let(actions::enterGameCenter)
+                    gameOpen = true
+                },
                 modifier = Modifier.padding(padding),
             )
         } else {
@@ -736,6 +753,7 @@ private fun MobileCommunityScreen(
     onSettings: () -> Unit,
     onProfile: () -> Unit,
     onDirectMessage: (User) -> Unit,
+    onGames: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val space = state.selectedSpace
@@ -927,6 +945,7 @@ private fun MobileCommunityScreen(
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
             MobileBottomAction(Icons.Default.Home, "社区", selected = true) {}
+            MobileBottomAction(Icons.Default.SportsEsports, "游戏", selected = false, onClick = onGames)
             MobileBottomAction(Icons.Default.ChatBubbleOutline, "当前频道", selected = false) {
                 state.selectedChannel?.let(onChannel)
             }

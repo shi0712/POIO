@@ -5,6 +5,7 @@ release/
 apps/desktop/release-*/
 releases/
 /data/
+apps/server/data/
 work/
 vendor/extract/
 vendor/*.tgz

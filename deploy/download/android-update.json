@@ -1,8 +1,8 @@
 {
-  "versionCode": 30,
-  "versionName": "1.0.2",
+  "versionCode": 31,
+  "versionName": "1.1.0",
   "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
-  "sha256": "5B0651AF50A8138794DC8DD6DBAFFCF08ACF279919EFE975E63D29658CA53E6B",
-  "size": 44422251,
-  "notes": "POIO Android 1.0.2：新增社区成员一对一私聊，支持实时消息、历史记录、未读提示、Markdown、图片、文件和复制消息；只有仍有共同社区的双方可以访问。"
+  "sha256": "33D6C83F6A50673C92A9CD33497E7FB7EEBE42A4181B24CC5DB508E6C68DD42A",
+  "size": 53386500,
+  "notes": "POIO Android 1.1.0：新增完整游戏中心，支持 21 点、Mines、社区多人 Crash、霓虹转轴、娱乐积分钱包、每日奖励、对局记录与可验证公平结果。游戏积分仅用于娱乐，不支持充值、提现、转账或兑换。"
 }

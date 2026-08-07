@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { config } from './config.js';
 import { bootstrap, channelMessages, channelSpaceId, createChannel, createDirectMessage, createMessage, createSpace, createSpaceInvite, deleteChannel, deleteMessage, directConversations, directMessages, editMessage, joinSpace, login, markDirectMessagesRead, mentionedUserIds, previewSpaceInvite, register, removeSpaceMember, renameChannel, renameSpace, resume, revokeSession, scheduleDatabaseBackups, searchMessages, spaceMemberIds, spaceMembers, toggleMessageReaction, updateAvatar, updateJoinSound, updateLeaveSound, updateMemberModeration, userFromToken, voiceChannelForUser, type PublicUser } from './database.js';
 import * as media from './media.js';
+import { blackjackAction, blackjackState, cashoutCrash, cashoutMines, claimGameDaily, crashState, gameEvents, gameHistory, gameOverview, gameWallet, minesState, placeCrashBet, playSlots, revealMineCell, slotState, startBlackjack, startMines } from './games.js';
 import { claimMumbleUsername, ensureVoiceChannel, kickMumbleUser, mumbleChannelName, removeVoiceChannel, setMumbleUserMuted } from './mumble-control.js';
 
 const app = express();
@@ -125,6 +126,19 @@ const notifyP2PPeerLeft = (socketId:string) => {
 };
 const socketsForUser = (userId:string) =>
   [...io.sockets.sockets.values()].filter(connected=>connected.data.user?.id===userId);
+const emitGameWallet = (userId:string) => {
+  for(const connected of socketsForUser(userId))connected.emit('game:wallet',gameWallet(userId));
+};
+const emitCrashState = (spaceId:string) => {
+  const room=io.sockets.adapter.rooms.get(`game:${spaceId}`);
+  if(!room)return;
+  for(const socketId of room){
+    const connected=io.sockets.sockets.get(socketId);const userId=connected?.data.user?.id;
+    if(userId)connected.emit('game:crash',crashState(spaceId,userId));
+  }
+};
+gameEvents.on('wallet:update',({userId}:{userId:string})=>emitGameWallet(userId));
+gameEvents.on('crash:update',({spaceId}:{spaceId:string})=>emitCrashState(spaceId));
 const forceUserOutOfSpace = async(spaceId:string,userId:string,reason:string) => {
   const shouldKick=[...voicePresence.values()].some(entry=>entry.user.id===userId&&channelSpaceId(entry.channelId)===spaceId);
   if(shouldKick)await kickMumbleUser(userId,reason).catch(error=>console.error('Mumble member kick failed',error));
@@ -146,7 +160,7 @@ io.on('connection', (socket) => {
   socket.on('app:capabilities', (_raw, ack: Ack) => { ok(ack,{
     protocolVersion:1,
     serverVersion:'0.6.0',
-    features:{chat:true,directMessages:true,attachments:true,chatReplies:true,chatEditing:true,chatReactions:true,chatSearch:true,chatMentions:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,voiceLeaveCues:true,customJoinSounds:true,customLeaveSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true},
+    features:{chat:true,directMessages:true,attachments:true,chatReplies:true,chatEditing:true,chatReactions:true,chatSearch:true,chatMentions:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,voiceLeaveCues:true,customJoinSounds:true,customLeaveSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true,gameCenter:true,blackjack:true,mines:true,slots:true,crash:true},
     media:{codecs:['video/H264','video/VP8','audio/opus'],webRtcPort:config.mediaPort},
     android:{minimumVersion:1,recommendedVersion:1}
   }); });
@@ -287,6 +301,30 @@ io.on('connection', (socket) => {
     for(const connected of socketsForUser(peerId))connected.emit('dm:read',{userId:user.id,...receipt});
     ok(ack,receipt);
   } catch(e){fail(ack,e);} });
+  socket.on('game:enter', (raw, ack: Ack) => { try {
+    const user=auth(socket);const {spaceId}=z.object({spaceId:z.string()}).parse(raw);spaceMembers(user.id,spaceId);
+    for(const room of socket.rooms)if(room.startsWith('game:'))socket.leave(room);
+    socket.join(`game:${spaceId}`);ok(ack,gameOverview(user.id,spaceId));
+  } catch(e){fail(ack,e);} });
+  socket.on('game:leave', (_raw, ack: Ack) => { try { auth(socket);for(const room of socket.rooms)if(room.startsWith('game:'))socket.leave(room);ok(ack,true); } catch(e){fail(ack,e);} });
+  socket.on('game:overview', (raw, ack: Ack) => { try {
+    const user=auth(socket);const {spaceId}=z.object({spaceId:z.string().optional()}).parse(raw);
+    if(spaceId)spaceMembers(user.id,spaceId);ok(ack,gameOverview(user.id,spaceId));
+  } catch(e){fail(ack,e);} });
+  socket.on('game:daily', (_raw, ack: Ack) => { try { ok(ack,claimGameDaily(auth(socket).id)); } catch(e){fail(ack,e);} });
+  socket.on('game:history', (raw, ack: Ack) => { try { const {limit}=z.object({limit:z.number().int().min(1).max(50).optional()}).parse(raw);ok(ack,gameHistory(auth(socket).id,limit)); } catch(e){fail(ack,e);} });
+  socket.on('game:blackjack:state', (_raw, ack: Ack) => { try { ok(ack,blackjackState(auth(socket).id)); } catch(e){fail(ack,e);} });
+  socket.on('game:blackjack:start', (raw, ack: Ack) => { try { const {wager}=z.object({wager:z.number().int()}).parse(raw);ok(ack,startBlackjack(auth(socket).id,wager)); } catch(e){fail(ack,e);} });
+  socket.on('game:blackjack:action', (raw, ack: Ack) => { try { const {action}=z.object({action:z.enum(['hit','stand','double'])}).parse(raw);ok(ack,blackjackAction(auth(socket).id,action)); } catch(e){fail(ack,e);} });
+  socket.on('game:mines:state', (_raw, ack: Ack) => { try { ok(ack,minesState(auth(socket).id)); } catch(e){fail(ack,e);} });
+  socket.on('game:mines:start', (raw, ack: Ack) => { try { const value=z.object({wager:z.number().int(),mineCount:z.number().int()}).parse(raw);ok(ack,startMines(auth(socket).id,value.wager,value.mineCount)); } catch(e){fail(ack,e);} });
+  socket.on('game:mines:reveal', (raw, ack: Ack) => { try { const {cell}=z.object({cell:z.number().int().min(0).max(24)}).parse(raw);ok(ack,revealMineCell(auth(socket).id,cell)); } catch(e){fail(ack,e);} });
+  socket.on('game:mines:cashout', (_raw, ack: Ack) => { try { ok(ack,cashoutMines(auth(socket).id)); } catch(e){fail(ack,e);} });
+  socket.on('game:slots:state', (_raw, ack: Ack) => { try { ok(ack,slotState(auth(socket).id)); } catch(e){fail(ack,e);} });
+  socket.on('game:slots:spin', (raw, ack: Ack) => { try { const value=z.object({wager:z.number().int(),useFreeSpin:z.boolean().optional()}).parse(raw);ok(ack,playSlots(auth(socket).id,value.wager,value.useFreeSpin)); } catch(e){fail(ack,e);} });
+  socket.on('game:crash:state', (raw, ack: Ack) => { try { const user=auth(socket);const {spaceId}=z.object({spaceId:z.string()}).parse(raw);spaceMembers(user.id,spaceId);ok(ack,crashState(spaceId,user.id)); } catch(e){fail(ack,e);} });
+  socket.on('game:crash:bet', (raw, ack: Ack) => { try { const user=auth(socket);const value=z.object({spaceId:z.string(),wager:z.number().int()}).parse(raw);spaceMembers(user.id,value.spaceId);ok(ack,placeCrashBet(value.spaceId,user.id,value.wager)); } catch(e){fail(ack,e);} });
+  socket.on('game:crash:cashout', (raw, ack: Ack) => { try { const user=auth(socket);const {spaceId}=z.object({spaceId:z.string()}).parse(raw);spaceMembers(user.id,spaceId);ok(ack,cashoutCrash(spaceId,user.id)); } catch(e){fail(ack,e);} });
   socket.on('channel:watch', (raw, ack: Ack) => { try { const channelId=z.object({channelId:z.string()}).parse(raw).channelId; const user=auth(socket); const spaceId=channelSpaceId(channelId);if(!spaceId)throw new Error('频道不存在');spaceMembers(user.id,spaceId);for (const room of socket.rooms) if(room.startsWith('channel:')) socket.leave(room); socket.join(`channel:${channelId}`); ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('voice:credentials', async (raw, ack: Ack) => { try {
     const user=auth(socket);
