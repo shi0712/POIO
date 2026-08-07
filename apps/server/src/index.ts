@@ -8,7 +8,7 @@ import { nanoid } from 'nanoid';
 import { Server } from 'socket.io';
 import { z } from 'zod';
 import { config } from './config.js';
-import { bootstrap, channelMessages, channelSpaceId, createChannel, createMessage, createSpace, createSpaceInvite, deleteChannel, deleteMessage, editMessage, joinSpace, login, mentionedUserIds, previewSpaceInvite, register, removeSpaceMember, renameChannel, renameSpace, resume, revokeSession, scheduleDatabaseBackups, searchMessages, spaceMemberIds, spaceMembers, toggleMessageReaction, updateAvatar, updateJoinSound, updateMemberModeration, userFromToken, voiceChannelForUser, type PublicUser } from './database.js';
+import { bootstrap, channelMessages, channelSpaceId, createChannel, createMessage, createSpace, createSpaceInvite, deleteChannel, deleteMessage, editMessage, joinSpace, login, mentionedUserIds, previewSpaceInvite, register, removeSpaceMember, renameChannel, renameSpace, resume, revokeSession, scheduleDatabaseBackups, searchMessages, spaceMemberIds, spaceMembers, toggleMessageReaction, updateAvatar, updateJoinSound, updateLeaveSound, updateMemberModeration, userFromToken, voiceChannelForUser, type PublicUser } from './database.js';
 import * as media from './media.js';
 import { claimMumbleUsername, ensureVoiceChannel, kickMumbleUser, mumbleChannelName, removeVoiceChannel, setMumbleUserMuted } from './mumble-control.js';
 
@@ -146,7 +146,7 @@ io.on('connection', (socket) => {
   socket.on('app:capabilities', (_raw, ack: Ack) => { ok(ack,{
     protocolVersion:1,
     serverVersion:'0.6.0',
-    features:{chat:true,attachments:true,chatReplies:true,chatEditing:true,chatReactions:true,chatSearch:true,chatMentions:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,voiceLeaveCues:true,customJoinSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true},
+    features:{chat:true,attachments:true,chatReplies:true,chatEditing:true,chatReactions:true,chatSearch:true,chatMentions:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,voiceLeaveCues:true,customJoinSounds:true,customLeaveSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true},
     media:{codecs:['video/H264','video/VP8','audio/opus'],webRtcPort:config.mediaPort},
     android:{minimumVersion:1,recommendedVersion:1}
   }); });
@@ -168,6 +168,11 @@ io.on('connection', (socket) => {
   socket.on('user:joinSound', (raw, ack: Ack) => { try {
     const current=auth(socket);const {url}=z.object({url:z.string().max(300).nullable()}).parse(raw);
     const updated=updateJoinSound(current.id,url);publishUserUpdate(updated,[...(socket.data.spaceIds??[])]);
+    ok(ack,updated);
+  } catch(e){fail(ack,e);} });
+  socket.on('user:leaveSound', (raw, ack: Ack) => { try {
+    const current=auth(socket);const {url}=z.object({url:z.string().max(300).nullable()}).parse(raw);
+    const updated=updateLeaveSound(current.id,url);publishUserUpdate(updated,[...(socket.data.spaceIds??[])]);
     ok(ack,updated);
   } catch(e){fail(ack,e);} });
   socket.on('bootstrap', (_raw, ack: Ack) => { try { ok(ack,bootstrap(auth(socket).id)); } catch(e){fail(ack,e);} });

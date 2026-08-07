@@ -11,7 +11,7 @@ class PoioJsonTest {
         val payload = JSONObject(
             """{
               "token":"abcdefghijklmnopqrstuvwxyz0123456789",
-              "user":{"id":"u1","username":"sjw","avatarUrl":null,"joinSoundUrl":"/uploads/join.mp3"},
+              "user":{"id":"u1","username":"sjw","avatarUrl":null,"joinSoundUrl":"/uploads/join.mp3","leaveSoundUrl":"/uploads/leave.mp3"},
               "bootstrap":[{"id":"s1","name":"sjw 的社区","ownerId":"u1","channels":[
                 {"id":"c1","name":"欢迎","kind":"text","position":0},
                 {"id":"c2","name":"大厅","kind":"voice","position":1}
@@ -23,6 +23,7 @@ class PoioJsonTest {
 
         assertEquals("sjw", auth.user.username)
         assertEquals("/uploads/join.mp3", auth.user.joinSoundUrl)
+        assertEquals("/uploads/leave.mp3", auth.user.leaveSoundUrl)
         assertEquals("大厅", auth.spaces.single().channels.last().name)
         assertEquals(ChannelKind.VOICE, auth.spaces.single().channels.last().kind)
     }

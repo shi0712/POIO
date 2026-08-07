@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { request, serverUrl, socket, uploadFile, type AuthPayload, type Channel, type ChatMessage, type Space, type SpaceMember, type User } from './api';
 import { ScreenSession, type RemoteMedia, type ScreenDiagnostics, type ScreenShareStatus, type ShareProfile } from './media';
-import { playDeafenCue, playMuteCue, playUndeafenCue, playUnmuteCue, playVoiceJoinCue, playVoiceLeaveCue, validateJoinSound } from './voice-join-cue';
+import { playDeafenCue, playMuteCue, playUndeafenCue, playUnmuteCue, playVoiceJoinCue, playVoiceLeaveCue, validateJoinSound, validateLeaveSound } from './voice-join-cue';
 import './fixes.css';
 
 const TOKEN_KEY='echodeck.session';
@@ -31,7 +31,7 @@ export default function App(){
   const previousAudioControls=useRef({muted:false,deafened:false});
   const [shareOpen,setShareOpen]=useState(false); const [sources,setSources]=useState<Array<any>>([]); const [shareSourcesLoading,setShareSourcesLoading]=useState(false); const [shareSourcesError,setShareSourcesError]=useState(''); const shareSourceEpoch=useRef(0); const [shareProfile,setShareProfile]=useState<ShareProfile>('hd'); const [shareAudio,setShareAudio]=useState(false); const [localShare,setLocalShare]=useState<MediaStream>();
   const [screenShareStatus,setScreenShareStatus]=useState<ScreenShareStatus>({sharing:false,connecting:false,directViewers:0,turnViewers:0,viewers:[]});
-  const [settingsOpen,setSettingsOpen]=useState(false); const [audioDevices,setAudioDevices]=useState<MumbleAudioDevices>(); const [settingsBusy,setSettingsBusy]=useState(false); const [joinSoundBusy,setJoinSoundBusy]=useState(false); const [voiceJoinCuesEnabled,setVoiceJoinCuesEnabled]=useState(()=>localStorage.getItem(VOICE_JOIN_CUES_KEY)!=='0');
+  const [settingsOpen,setSettingsOpen]=useState(false); const [audioDevices,setAudioDevices]=useState<MumbleAudioDevices>(); const [settingsBusy,setSettingsBusy]=useState(false); const [joinSoundBusy,setJoinSoundBusy]=useState(false); const [leaveSoundBusy,setLeaveSoundBusy]=useState(false); const [voiceJoinCuesEnabled,setVoiceJoinCuesEnabled]=useState(()=>localStorage.getItem(VOICE_JOIN_CUES_KEY)!=='0');
   const [spaceDialog,setSpaceDialog]=useState<'create'|'join'>(); const [channelDialog,setChannelDialog]=useState<'text'|'voice'>(); const [invite,setInvite]=useState<SpaceInvite>(); const [managementOpen,setManagementOpen]=useState(false); const [incomingInvite,setIncomingInvite]=useState<InvitePreview>(); const [incomingInviteLoading,setIncomingInviteLoading]=useState(false); const [incomingInviteJoining,setIncomingInviteJoining]=useState(false); const [spaceMembers,setSpaceMembers]=useState<SpaceMember[]>([]); const [onlineUserIds,setOnlineUserIds]=useState<string[]>([]); const [membersOpen,setMembersOpen]=useState(true); const [emojiOpen,setEmojiOpen]=useState(false); const [accountOpen,setAccountOpen]=useState(false); const [channelQuery,setChannelQuery]=useState(''); const channelSearchRef=useRef<HTMLInputElement>(null);
   const [updateStatus,setUpdateStatus]=useState<AppUpdateStatus>({state:'idle'});
   const [updateDialogOpen,setUpdateDialogOpen]=useState(false);
@@ -88,7 +88,7 @@ export default function App(){
   useEffect(()=>{
     const left=(event:{channelId:string;user:User})=>{
       if(!voiceJoinCuesEnabled||event.channelId!==voiceChannel)return;
-      void playVoiceLeaveCue();
+      void playVoiceLeaveCue(event.user.leaveSoundUrl?`${serverUrl}${event.user.leaveSoundUrl}`:undefined);
     };
     socket.on('voice:memberLeft',left);
     return()=>{socket.off('voice:memberLeft',left)};
@@ -229,6 +229,8 @@ export default function App(){
   const updateAvatarFromFile=async(file?:File)=>{if(!file||avatarUploading)return;if(!['image/png','image/jpeg','image/webp','image/gif'].includes(file.type)){showError(new Error('头像仅支持 PNG、JPG、GIF 或 WebP'));return}if(file.size>8*1024*1024){showError(new Error('头像不能超过 8 MB'));return}setAvatarUploading(true);try{const token=localStorage.getItem(TOKEN_KEY)??'';const uploaded=await uploadFile(file,token);const updated=await request<User>('user:avatar',{url:uploaded.url});setUser(updated);setAccountOpen(false)}catch(e){showError(e)}finally{setAvatarUploading(false);if(avatarRef.current)avatarRef.current.value=''}};
   const updateJoinSoundFromFile=async(file?:File)=>{if(!file||joinSoundBusy)return;setJoinSoundBusy(true);try{await validateJoinSound(file);const token=localStorage.getItem(TOKEN_KEY)??'';const uploaded=await uploadFile(file,token);const updated=await request<User>('user:joinSound',{url:uploaded.url});setUser(updated);void playVoiceJoinCue(`${serverUrl}${updated.joinSoundUrl}`)}catch(e){showError(e)}finally{setJoinSoundBusy(false)}};
   const removeJoinSound=async()=>{if(joinSoundBusy)return;setJoinSoundBusy(true);try{setUser(await request<User>('user:joinSound',{url:null}));void playVoiceJoinCue()}catch(e){showError(e)}finally{setJoinSoundBusy(false)}};
+  const updateLeaveSoundFromFile=async(file?:File)=>{if(!file||leaveSoundBusy)return;setLeaveSoundBusy(true);try{await validateLeaveSound(file);const token=localStorage.getItem(TOKEN_KEY)??'';const uploaded=await uploadFile(file,token);const updated=await request<User>('user:leaveSound',{url:uploaded.url});setUser(updated);void playVoiceLeaveCue(`${serverUrl}${updated.leaveSoundUrl}`)}catch(e){showError(e)}finally{setLeaveSoundBusy(false)}};
+  const removeLeaveSound=async()=>{if(leaveSoundBusy)return;setLeaveSoundBusy(true);try{setUser(await request<User>('user:leaveSound',{url:null}));void playVoiceLeaveCue()}catch(e){showError(e)}finally{setLeaveSoundBusy(false)}};
   const toggleVoiceJoinCues=(enabled:boolean)=>{setVoiceJoinCuesEnabled(enabled);localStorage.setItem(VOICE_JOIN_CUES_KEY,enabled?'1':'0')};
   const addChannel=async(name:string,kind:'text'|'voice')=>{if(!currentSpace)return;try{const c=await request<Channel>('channel:create',{spaceId:currentSpace.id,name,kind});setChannelId(c.id);setChannelDialog(undefined)}catch(e){showError(e)}};
   const openInvite=async()=>{if(!currentSpace)return;try{setInvite(await request<SpaceInvite>('space:invite',{spaceId:currentSpace.id}))}catch(e){showError(e)}};
@@ -279,7 +281,7 @@ export default function App(){
     <aside className="member-panel">{currentChannel?.kind==='voice'?<><div className="member-title">频道成员 — {visibleVoiceMembers.length}</div>{visibleVoiceMembers.map(member=><MemberRow key={member.id} member={member} online status={`已进入 ${currentChannel.name}`}/>)}</>:<><div className="member-title">在线 — {onlineMembers.length}</div>{onlineMembers.map(member=><MemberRow key={member.id} member={member} online status={member.role==='owner'?'社区拥有者':'在线'}/>)}<div className="member-title muted">离线 — {offlineMembers.length}</div>{offlineMembers.map(member=><MemberRow key={member.id} member={member} status={member.role==='owner'?'社区拥有者':'离线'}/>)}</>}{isSpaceOwner&&<button className="invite-member" onClick={()=>void openInvite()}><UserPlus size={15}/>邀请好友加入</button>}</aside>
     {spaceDialog&&<SpaceDialog initialMode={spaceDialog} onCreate={createSpaceFromDialog} onJoin={joinSpaceFromDialog} onClose={()=>setSpaceDialog(undefined)}/>} {channelDialog&&<ChannelDialog kind={channelDialog} onCreate={addChannel} onClose={()=>setChannelDialog(undefined)}/>} {invite&&<InviteDialog invite={invite} onClose={()=>setInvite(undefined)}/>} {managementOpen&&currentSpace&&isSpaceOwner&&<CommunityManagement space={currentSpace} members={spaceMembers} onError={showError} onClose={()=>setManagementOpen(false)}/>} {incomingInvite&&<IncomingInviteDialog invite={incomingInvite} alreadyJoined={spaces.some(space=>space.id===incomingInvite.spaceId)} busy={incomingInviteJoining} onAccept={()=>void acceptIncomingInvite()} onClose={()=>{localStorage.removeItem(PENDING_INVITE_KEY);setIncomingInvite(undefined)}}/>} {imagePreview&&<ImagePreview url={imagePreview.url} name={imagePreview.name} onClose={()=>setImagePreview(undefined)}/>} {screenshot&&<ScreenshotSelector capture={screenshot} onConfirm={queueScreenshot} onClose={()=>setScreenshot(undefined)}/>}
     {shareOpen&&<SharePicker sources={sources} loading={shareSourcesLoading} error={shareSourcesError} profile={shareProfile} setProfile={setShareProfile} includeAudio={shareAudio} setIncludeAudio={setShareAudio} onPick={startShare} onRetry={()=>{const epoch=++shareSourceEpoch.current;void loadShareSources(epoch)}} onClose={closeShare}/>}
-    {settingsOpen&&<AudioSettings connected={!!voiceChannel} devices={audioDevices} busy={settingsBusy} micLevel={muted?0:micLevel} joinSoundBusy={joinSoundBusy} joinSoundUrl={user.joinSoundUrl} voiceJoinCuesEnabled={voiceJoinCuesEnabled} onToggleVoiceJoinCues={toggleVoiceJoinCues} onUploadJoinSound={updateJoinSoundFromFile} onRemoveJoinSound={removeJoinSound} onTestJoinSound={()=>void playVoiceJoinCue(user.joinSoundUrl?`${serverUrl}${user.joinSoundUrl}`:undefined)} onRefresh={loadAudioDevices} onSelect={async(kind,index)=>{setSettingsBusy(true);try{const mumble=electronBridge().mumble;setAudioDevices(kind==='input'?await mumble.setInput(index):await mumble.setOutput(index))}catch(e){showError(e)}finally{setSettingsBusy(false)}}} onClose={()=>setSettingsOpen(false)}/>}
+    {settingsOpen&&<AudioSettings connected={!!voiceChannel} devices={audioDevices} busy={settingsBusy} micLevel={muted?0:micLevel} joinSoundBusy={joinSoundBusy} joinSoundUrl={user.joinSoundUrl} leaveSoundBusy={leaveSoundBusy} leaveSoundUrl={user.leaveSoundUrl} voiceJoinCuesEnabled={voiceJoinCuesEnabled} onToggleVoiceJoinCues={toggleVoiceJoinCues} onUploadJoinSound={updateJoinSoundFromFile} onRemoveJoinSound={removeJoinSound} onTestJoinSound={()=>void playVoiceJoinCue(user.joinSoundUrl?`${serverUrl}${user.joinSoundUrl}`:undefined)} onUploadLeaveSound={updateLeaveSoundFromFile} onRemoveLeaveSound={removeLeaveSound} onTestLeaveSound={()=>void playVoiceLeaveCue(user.leaveSoundUrl?`${serverUrl}${user.leaveSoundUrl}`:undefined)} onRefresh={loadAudioDevices} onSelect={async(kind,index)=>{setSettingsBusy(true);try{const mumble=electronBridge().mumble;setAudioDevices(kind==='input'?await mumble.setInput(index):await mumble.setOutput(index))}catch(e){showError(e)}finally{setSettingsBusy(false)}}} onClose={()=>setSettingsOpen(false)}/>}
     {updateDialogOpen&&<UpdateDialog status={updateStatus} onClose={()=>setUpdateDialogOpen(false)} onDownload={()=>void window.echodeck?.update.download()} onInstall={()=>void window.echodeck?.update.install()} onRetry={()=>void window.echodeck?.update.check()}/>} {error&&<div className="toast">{error}</div>}
   </div>
 }
@@ -359,19 +361,25 @@ type AudioSettingsProps={
   micLevel:number;
   joinSoundBusy:boolean;
   joinSoundUrl?:string;
+  leaveSoundBusy:boolean;
+  leaveSoundUrl?:string;
   voiceJoinCuesEnabled:boolean;
   onToggleVoiceJoinCues:(enabled:boolean)=>void;
   onUploadJoinSound:(file?:File)=>Promise<void>;
   onRemoveJoinSound:()=>Promise<void>;
   onTestJoinSound:()=>void;
+  onUploadLeaveSound:(file?:File)=>Promise<void>;
+  onRemoveLeaveSound:()=>Promise<void>;
+  onTestLeaveSound:()=>void;
   onRefresh:()=>Promise<void>;
   onSelect:(kind:'input'|'output',index:number)=>Promise<void>;
   onClose:()=>void;
 };
-function AudioSettings({connected,devices,busy,micLevel,joinSoundBusy,joinSoundUrl,voiceJoinCuesEnabled,onToggleVoiceJoinCues,onUploadJoinSound,onRemoveJoinSound,onTestJoinSound,onRefresh,onSelect,onClose}:AudioSettingsProps){
+function AudioSettings({connected,devices,busy,micLevel,joinSoundBusy,joinSoundUrl,leaveSoundBusy,leaveSoundUrl,voiceJoinCuesEnabled,onToggleVoiceJoinCues,onUploadJoinSound,onRemoveJoinSound,onTestJoinSound,onUploadLeaveSound,onRemoveLeaveSound,onTestLeaveSound,onRefresh,onSelect,onClose}:AudioSettingsProps){
   const isWeb=window.echodeck?.platform==='web';
   const [testing,setTesting]=useState(false);
   const joinSoundInputRef=useRef<HTMLInputElement>(null);
+  const leaveSoundInputRef=useRef<HTMLInputElement>(null);
   const [diagnosticsState,setDiagnosticsState]=useState<'idle'|'copying'|'copied'>('idle');
   const [preferences,setPreferences]=useState<DesktopPreferences>({closeToTray:true,launchAtLogin:false,muteShortcut:{virtualKey:77,modifiers:3,label:'Ctrl + Shift + M'},pushToTalkEnabled:false,pushToTalkShortcut:{virtualKey:86,modifiers:0,label:'V'}});
   const [preferencesBusy,setPreferencesBusy]=useState(false);
@@ -457,6 +465,15 @@ function AudioSettings({connected,devices,busy,micLevel,joinSoundBusy,joinSoundU
             {joinSoundUrl&&<button className="danger-subtle" disabled={joinSoundBusy} onClick={()=>void onRemoveJoinSound()}>恢复默认</button>}
           </div>
           <input ref={joinSoundInputRef} hidden type="file" accept=".mp3,.ogg,.wav,.m4a,.aac,.webm,audio/*" onChange={event=>{const file=event.target.files?.[0];event.target.value='';void onUploadJoinSound(file)}}/>
+        </div>
+        <div className="join-sound-file">
+          <span><b>{leaveSoundUrl?'已设置自定义退出音':'使用 POIO 默认退出音'}</b><small>{leaveSoundUrl?'你离开频道时，频道成员会听到这个声音。':'上传后，你离开频道时会播放自定义声音。'}</small></span>
+          <div>
+            <button disabled={leaveSoundBusy} onClick={onTestLeaveSound}><Play/>{leaveSoundUrl?'试听':'试听默认音'}</button>
+            <button disabled={leaveSoundBusy} onClick={()=>leaveSoundInputRef.current?.click()}><Upload/>{leaveSoundBusy?'上传中…':leaveSoundUrl?'更换':'上传'}</button>
+            {leaveSoundUrl&&<button className="danger-subtle" disabled={leaveSoundBusy} onClick={()=>void onRemoveLeaveSound()}>恢复默认</button>}
+          </div>
+          <input ref={leaveSoundInputRef} hidden type="file" accept=".mp3,.ogg,.wav,.m4a,.aac,.webm,audio/*" onChange={event=>{const file=event.target.files?.[0];event.target.value='';void onUploadLeaveSound(file)}}/>
         </div>
         <p className="join-sound-limits">支持 MP3、OGG、WAV、M4A、AAC、WebM；最大 2 MB，时长 0.1–4 秒。</p>
       </section>

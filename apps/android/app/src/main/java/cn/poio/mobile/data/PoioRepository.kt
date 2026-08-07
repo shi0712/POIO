@@ -1,6 +1,7 @@
 package cn.poio.mobile.data
 
 import android.content.ContentResolver
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import cn.poio.mobile.BuildConfig
 import cn.poio.mobile.model.AuthPayload
@@ -19,6 +20,7 @@ import cn.poio.mobile.voice.MumbleCredentials
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -28,8 +30,10 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 
 data class PoioState(
     val connecting: Boolean = true,
@@ -66,7 +70,7 @@ sealed interface VoicePresenceCue {
 class PoioRepository(
     private val scope: CoroutineScope,
     private val session: SecureSessionStore,
-    contentResolver: ContentResolver,
+    private val contentResolver: ContentResolver,
 ) {
     internal val client = PoioSocketClient(BuildConfig.POIO_SERVER_URL)
     private val uploader = AttachmentUploader(contentResolver, session, BuildConfig.POIO_SERVER_URL)
@@ -259,6 +263,40 @@ class PoioRepository(
         val attachment = uploader.upload(uri, maxSize = 10L * 1024 * 1024, requiredMimePrefix = "image/")
         val value = client.request("user:avatar", JSONObject().put("url", attachment.url)) as JSONObject
         applyUserUpdate(PoioJson.user(value))
+    }
+
+    suspend fun updateLeaveSound(uri: Uri?) = guarded {
+        val url = uri?.let {
+            validateVoiceSound(it)
+            uploader.upload(it, maxSize = 2L * 1024 * 1024, requiredMimePrefix = "audio/").url
+        }
+        val value = client.request(
+            "user:leaveSound",
+            JSONObject().put("url", url ?: JSONObject.NULL),
+        ) as JSONObject
+        applyUserUpdate(PoioJson.user(value))
+    }
+
+    private suspend fun validateVoiceSound(uri: Uri) = withContext(Dispatchers.IO) {
+        val retriever = MediaMetadataRetriever()
+        try {
+            contentResolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
+                if (descriptor.length >= 0) {
+                    retriever.setDataSource(descriptor.fileDescriptor, descriptor.startOffset, descriptor.length)
+                } else {
+                    retriever.setDataSource(descriptor.fileDescriptor)
+                }
+            } ?: throw IOException("无法读取提示音文件")
+            val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+                ?: throw IOException("无法读取提示音时长，请更换文件")
+            if (duration !in 100L..4_000L) throw IOException("退出提示音时长需为 0.1–4 秒")
+        } catch (error: IOException) {
+            throw error
+        } catch (_: Exception) {
+            throw IOException("无法读取提示音文件")
+        } finally {
+            runCatching { retriever.release() }
+        }
     }
 
     suspend fun createSpace(name: String) = guarded {

@@ -40,6 +40,19 @@ test('custom join sounds are stored with the user and size-limited',async()=>{
   assert.equal(database.updateJoinSound(auth.user.id,null).joinSoundUrl,null);
 });
 
+test('custom leave sounds are stored with the user and size-limited',async()=>{
+  const auth=await database.register(`leave_cue_${Date.now()}`,'Leave-sound-test');
+  mkdirSync(process.env.UPLOAD_PATH!,{recursive:true});
+  writeFileSync(path.join(process.env.UPLOAD_PATH!,'valid-leave.mp3'),Buffer.alloc(1024));
+  const updated=database.updateLeaveSound(auth.user.id,'/uploads/valid-leave.mp3');
+  assert.equal(updated.leaveSoundUrl,'/uploads/valid-leave.mp3');
+  assert.equal(database.userFromToken(auth.token)?.leaveSoundUrl,'/uploads/valid-leave.mp3');
+  assert.throws(()=>database.updateLeaveSound(auth.user.id,'/uploads/missing-leave.mp3'),/不存在/);
+  writeFileSync(path.join(process.env.UPLOAD_PATH!,'too-large-leave.mp3'),Buffer.alloc(2*1024*1024+1));
+  assert.throws(()=>database.updateLeaveSound(auth.user.id,'/uploads/too-large-leave.mp3'),/2 MB/);
+  assert.equal(database.updateLeaveSound(auth.user.id,null).leaveSoundUrl,null);
+});
+
 test('only the community owner can moderate members and manage channels',async()=>{
   const owner=await database.register(`moderator_${Date.now()}`,'Owner-moderation-test');
   const guest=await database.register(`member_${Date.now()}`,'Guest-moderation-test');

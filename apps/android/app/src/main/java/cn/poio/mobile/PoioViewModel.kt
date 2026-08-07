@@ -113,6 +113,13 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
     override fun searchMessages(query: String) { viewModelScope.launch { repository.searchMessages(query) } }
     override fun clearMessageSearch() = repository.clearMessageSearch()
     override fun updateAvatar(uri: Uri) { viewModelScope.launch { repository.updateAvatar(uri) } }
+    override fun updateLeaveSound(uri: Uri?) {
+        viewModelScope.launch {
+            repository.updateLeaveSound(uri)
+            voiceCuePlayer.playLeave(state.value.user?.leaveSoundUrl)
+        }
+    }
+    override fun testLeaveSound() = voiceCuePlayer.playLeave(state.value.user?.leaveSoundUrl)
     override fun createSpace(name: String) { viewModelScope.launch { repository.createSpace(name) } }
     override fun joinSpace(code: String) { viewModelScope.launch { repository.joinSpace(code) } }
     override fun createSpaceInvite() { viewModelScope.launch { repository.createSpaceInvite() } }
@@ -214,6 +221,7 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
 
     private suspend fun leaveVoiceInternal() {
         val hadVoice = state.value.voiceChannelId != null
+        val leaveSoundUrl = state.value.user?.leaveSoundUrl
         screenRecoveryJob?.cancel()
         screenRecoveryJob = null
         screenRecoveryAttempt = 0
@@ -223,7 +231,7 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
             announceRemoteLeave = repository::announceVoiceLeave,
             leaveScreen = screenReceiver::leave,
         )
-        if (hadVoice) voiceCuePlayer.playLeave()
+        if (hadVoice) voiceCuePlayer.playLeave(leaveSoundUrl)
     }
 
     private suspend fun runVoiceAction(action: suspend () -> Unit) {
@@ -284,6 +292,8 @@ interface PoioActions {
     fun searchMessages(query: String)
     fun clearMessageSearch()
     fun updateAvatar(uri: Uri)
+    fun updateLeaveSound(uri: Uri?)
+    fun testLeaveSound()
     fun createSpace(name: String)
     fun joinSpace(code: String)
     fun createSpaceInvite()

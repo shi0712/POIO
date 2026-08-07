@@ -39,10 +39,7 @@ function playDefaultJoinCue(){
   }
 }
 
-async function playFileCue(kind:CueKind,url:string,volume:number,fallback?:()=>void){
-  const now=Date.now();
-  if(now-(lastCueAt.get(kind)??0)<MIN_CUE_INTERVAL_MS)return;
-  lastCueAt.set(kind,now);
+async function playAudioUrl(url:string,volume:number,fallback?:()=>void){
   activeAudio?.pause();
   activeAudio=undefined;
   const audio=new Audio(url);
@@ -55,12 +52,19 @@ async function playFileCue(kind:CueKind,url:string,volume:number,fallback?:()=>v
   try{await audio.play()}catch{window.clearTimeout(stop);if(activeAudio===audio)activeAudio=undefined;fallback?.()}
 }
 
+async function playFileCue(kind:CueKind,url:string,volume:number,fallback?:()=>void){
+  const now=Date.now();
+  if(now-(lastCueAt.get(kind)??0)<MIN_CUE_INTERVAL_MS)return;
+  lastCueAt.set(kind,now);
+  await playAudioUrl(url,volume,fallback);
+}
+
 export async function playVoiceJoinCue(customUrl?:string){
   await playFileCue('join',customUrl??DEFAULT_JOIN_CUE_URL,.68,playDefaultJoinCue);
 }
 
-export async function playVoiceLeaveCue(){
-  await playFileCue('leave',LEAVE_CUE_URL,.68);
+export async function playVoiceLeaveCue(customUrl?:string){
+  await playFileCue('leave',customUrl??LEAVE_CUE_URL,.68,customUrl?()=>void playAudioUrl(LEAVE_CUE_URL,.68):undefined);
 }
 
 export async function playMuteCue(){
@@ -79,9 +83,9 @@ export async function playUndeafenCue(){
   await playFileCue('undeafen',UNDEAFEN_CUE_URL,.62);
 }
 
-export async function validateJoinSound(file:File){
-  if(!/\.(mp3|ogg|wav|m4a|aac|webm)$/i.test(file.name))throw new Error('加入提示音仅支持 MP3、OGG、WAV、M4A、AAC 或 WebM');
-  if(file.size>2*1024*1024)throw new Error('加入提示音不能超过 2 MB');
+async function validateVoiceSound(file:File,label:string){
+  if(!/\.(mp3|ogg|wav|m4a|aac|webm)$/i.test(file.name))throw new Error(`${label}仅支持 MP3、OGG、WAV、M4A、AAC 或 WebM`);
+  if(file.size>2*1024*1024)throw new Error(`${label}不能超过 2 MB`);
   const url=URL.createObjectURL(file);
   try{
     const duration=await new Promise<number>((resolve,reject)=>{
@@ -92,8 +96,11 @@ export async function validateJoinSound(file:File){
       audio.onerror=()=>{window.clearTimeout(timer);reject(new Error('无法读取提示音文件'))};
       audio.src=url;
     });
-    if(!Number.isFinite(duration)||duration<.1||duration>4)throw new Error('加入提示音时长需为 0.1–4 秒');
+    if(!Number.isFinite(duration)||duration<.1||duration>4)throw new Error(`${label}时长需为 0.1–4 秒`);
   }finally{
     URL.revokeObjectURL(url);
   }
 }
+
+export const validateJoinSound=(file:File)=>validateVoiceSound(file,'加入提示音');
+export const validateLeaveSound=(file:File)=>validateVoiceSound(file,'退出提示音');

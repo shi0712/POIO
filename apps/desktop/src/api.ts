@@ -1,6 +1,6 @@
 import { io, type Socket } from 'socket.io-client';
 
-export type User = { id: string; username: string; avatarUrl?:string; joinSoundUrl?:string };
+export type User = { id: string; username: string; avatarUrl?:string; joinSoundUrl?:string; leaveSoundUrl?:string };
 export type SpaceMember = User & { role:'owner'|'admin'|'member'; textMuted:boolean; voiceMuted:boolean };
 export type Channel = { id: string; spaceId?: string; name: string; kind: 'text'|'voice'; position: number };
 export type Space = { id: string; name: string; ownerId: string; channels: Channel[] };

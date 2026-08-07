@@ -12,8 +12,8 @@ android {
         applicationId = "cn.poio.mobile"
         minSdk = 26
         targetSdk = 36
-        versionCode = 28
-        versionName = "1.0.0"
+        versionCode = 29
+        versionName = "1.0.1"
 
         buildConfigField("String", "POIO_SERVER_URL", "\"https://115.159.222.29/poio\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

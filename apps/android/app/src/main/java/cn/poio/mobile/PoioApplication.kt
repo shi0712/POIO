@@ -41,7 +41,7 @@ class PoioApplication : Application() {
                 ) return@collect
                 when (cue) {
                     is VoicePresenceCue.Joined -> voiceCuePlayer.playJoin(cue.user.joinSoundUrl)
-                    is VoicePresenceCue.Left -> voiceCuePlayer.playLeave()
+                    is VoicePresenceCue.Left -> voiceCuePlayer.playLeave(cue.user.leaveSoundUrl)
                 }
             }
         }
@@ -90,11 +90,12 @@ class PoioApplication : Application() {
 
     fun leaveVoiceFromNotification() {
         val hadVoice = repository.state.value.voiceChannelId != null
+        val leaveSoundUrl = repository.state.value.user?.leaveSoundUrl
         repository.markVoiceLeftLocally()
         runtimeScope.launch {
             runCatching { voiceEngine.disconnect() }
             runCatching { repository.announceVoiceLeave() }
-            if (hadVoice) voiceCuePlayer.playLeave()
+            if (hadVoice) voiceCuePlayer.playLeave(leaveSoundUrl)
         }
     }
 }

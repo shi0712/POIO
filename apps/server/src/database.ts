@@ -47,6 +47,7 @@ db.exec(`
 const userColumns=db.prepare('PRAGMA table_info(users)').all() as Array<{name:string}>;
 if(!userColumns.some(column=>column.name==='avatar_url'))db.exec('ALTER TABLE users ADD COLUMN avatar_url TEXT');
 if(!userColumns.some(column=>column.name==='join_sound_url'))db.exec('ALTER TABLE users ADD COLUMN join_sound_url TEXT');
+if(!userColumns.some(column=>column.name==='leave_sound_url'))db.exec('ALTER TABLE users ADD COLUMN leave_sound_url TEXT');
 const membershipColumns=db.prepare('PRAGMA table_info(memberships)').all() as Array<{name:string}>;
 if(!membershipColumns.some(column=>column.name==='text_muted'))db.exec('ALTER TABLE memberships ADD COLUMN text_muted INTEGER NOT NULL DEFAULT 0');
 if(!membershipColumns.some(column=>column.name==='voice_muted'))db.exec('ALTER TABLE memberships ADD COLUMN voice_muted INTEGER NOT NULL DEFAULT 0');
@@ -104,7 +105,7 @@ export function scheduleDatabaseBackups() {
 }
 
 const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
-export type PublicUser = { id: string; username: string; avatarUrl?:string; joinSoundUrl?:string };
+export type PublicUser = { id: string; username: string; avatarUrl?:string; joinSoundUrl?:string; leaveSoundUrl?:string };
 export type SpaceMember = PublicUser&{
   role:string;
   textMuted:boolean;
@@ -147,9 +148,9 @@ export async function register(username: string, password: string) {
 }
 
 export async function login(username: string, password: string) {
-  const row = db.prepare('SELECT id,username,password_hash,avatar_url AS avatarUrl,join_sound_url AS joinSoundUrl FROM users WHERE username=?').get(username) as { id: string; username: string; password_hash: string; avatarUrl?:string; joinSoundUrl?:string } | undefined;
+  const row = db.prepare('SELECT id,username,password_hash,avatar_url AS avatarUrl,join_sound_url AS joinSoundUrl,leave_sound_url AS leaveSoundUrl FROM users WHERE username=?').get(username) as { id: string; username: string; password_hash: string; avatarUrl?:string; joinSoundUrl?:string; leaveSoundUrl?:string } | undefined;
   if (!row || !(await argon2.verify(row.password_hash, password))) throw new Error('用户名或密码不正确');
-  return issueSession({ id: row.id, username: row.username, avatarUrl:row.avatarUrl, joinSoundUrl:row.joinSoundUrl });
+  return issueSession({ id: row.id, username: row.username, avatarUrl:row.avatarUrl, joinSoundUrl:row.joinSoundUrl, leaveSoundUrl:row.leaveSoundUrl });
 }
 
 function issueSession(user: PublicUser) {
@@ -167,27 +168,41 @@ export function resume(token: string) {
 }
 
 export function userFromToken(token: string) {
-  return db.prepare(`SELECT u.id,u.username,u.avatar_url AS avatarUrl,u.join_sound_url AS joinSoundUrl FROM sessions s JOIN users u ON u.id=s.user_id
+  return db.prepare(`SELECT u.id,u.username,u.avatar_url AS avatarUrl,u.join_sound_url AS joinSoundUrl,u.leave_sound_url AS leaveSoundUrl FROM sessions s JOIN users u ON u.id=s.user_id
     WHERE s.token_hash=? AND s.expires_at>?`).get(hashToken(token), Date.now()) as PublicUser | undefined;
 }
 
 export function updateAvatar(userId:string,avatarUrl:string|null) {
   if(avatarUrl&&!/^\/uploads\/[A-Za-z0-9_-]+\.(?:png|jpe?g|webp|gif)$/i.test(avatarUrl))throw new Error('头像文件格式无效');
   db.prepare('UPDATE users SET avatar_url=? WHERE id=?').run(avatarUrl,userId);
-  return db.prepare('SELECT id,username,avatar_url AS avatarUrl,join_sound_url AS joinSoundUrl FROM users WHERE id=?').get(userId) as PublicUser;
+  return publicUserById(userId);
+}
+
+function publicUserById(userId:string) {
+  return db.prepare('SELECT id,username,avatar_url AS avatarUrl,join_sound_url AS joinSoundUrl,leave_sound_url AS leaveSoundUrl FROM users WHERE id=?').get(userId) as PublicUser;
+}
+
+function validateVoiceSound(soundUrl:string|null,label:string) {
+  if(soundUrl){
+    if(!/^\/uploads\/[A-Za-z0-9_-]+\.(?:mp3|ogg|wav|m4a|aac|webm)$/i.test(soundUrl))throw new Error(`${label}仅支持 MP3、OGG、WAV、M4A、AAC 或 WebM`);
+    const filename=path.basename(soundUrl);
+    const soundPath=path.resolve(config.uploadPath,filename);
+    if(path.dirname(soundPath)!==path.resolve(config.uploadPath)||!existsSync(soundPath))throw new Error(`${label}文件不存在`);
+    const stats=statSync(soundPath);
+    if(!stats.isFile()||stats.size>2*1024*1024)throw new Error(`${label}不能超过 2 MB`);
+  }
 }
 
 export function updateJoinSound(userId:string,joinSoundUrl:string|null) {
-  if(joinSoundUrl){
-    if(!/^\/uploads\/[A-Za-z0-9_-]+\.(?:mp3|ogg|wav|m4a|aac|webm)$/i.test(joinSoundUrl))throw new Error('加入提示音仅支持 MP3、OGG、WAV、M4A、AAC 或 WebM');
-    const filename=path.basename(joinSoundUrl);
-    const soundPath=path.resolve(config.uploadPath,filename);
-    if(path.dirname(soundPath)!==path.resolve(config.uploadPath)||!existsSync(soundPath))throw new Error('加入提示音文件不存在');
-    const stats=statSync(soundPath);
-    if(!stats.isFile()||stats.size>2*1024*1024)throw new Error('加入提示音不能超过 2 MB');
-  }
+  validateVoiceSound(joinSoundUrl,'加入提示音');
   db.prepare('UPDATE users SET join_sound_url=? WHERE id=?').run(joinSoundUrl,userId);
-  return db.prepare('SELECT id,username,avatar_url AS avatarUrl,join_sound_url AS joinSoundUrl FROM users WHERE id=?').get(userId) as PublicUser;
+  return publicUserById(userId);
+}
+
+export function updateLeaveSound(userId:string,leaveSoundUrl:string|null) {
+  validateVoiceSound(leaveSoundUrl,'退出提示音');
+  db.prepare('UPDATE users SET leave_sound_url=? WHERE id=?').run(leaveSoundUrl,userId);
+  return publicUserById(userId);
 }
 
 export function revokeSession(token:string) {
@@ -254,7 +269,7 @@ export function joinSpace(user: PublicUser, rawCode: string) {
 export function spaceMembers(userId:string,spaceId:string) {
   const allowed=db.prepare('SELECT 1 FROM memberships WHERE space_id=? AND user_id=?').get(spaceId,userId);
   if(!allowed)throw new Error('无法访问该社区');
-  const members=db.prepare(`SELECT u.id,u.username,u.avatar_url AS avatarUrl,u.join_sound_url AS joinSoundUrl,
+  const members=db.prepare(`SELECT u.id,u.username,u.avatar_url AS avatarUrl,u.join_sound_url AS joinSoundUrl,u.leave_sound_url AS leaveSoundUrl,
     m.role,m.text_muted AS textMuted,m.voice_muted AS voiceMuted
     FROM memberships m JOIN users u ON u.id=m.user_id
     WHERE m.space_id=? ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,u.username COLLATE NOCASE`)

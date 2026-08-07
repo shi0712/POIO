@@ -35,7 +35,12 @@ class VoiceCuePlayer(context: Context) {
         customUrl = customPath?.let(::poioAssetUrl),
     )
 
-    fun playLeave() = enqueue(VoiceCue.LEAVE, R.raw.user_leave, .68f)
+    fun playLeave(customPath: String? = null) = enqueue(
+        cue = VoiceCue.LEAVE,
+        resourceId = R.raw.user_leave,
+        volume = .68f,
+        customUrl = customPath?.let(::poioAssetUrl),
+    )
     fun playMute() = enqueue(VoiceCue.MUTE, R.raw.mkf_mute, .62f)
     fun playUnmute() = enqueue(VoiceCue.UNMUTE, R.raw.mkf_cancel_mute, .62f)
     fun playDeafen() = enqueue(VoiceCue.DEAFEN, R.raw.head_mute, .62f)

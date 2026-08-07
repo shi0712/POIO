@@ -9,6 +9,7 @@ data class User(
     val avatarUrl: String? = null,
     val role: String? = null,
     val joinSoundUrl: String? = null,
+    val leaveSoundUrl: String? = null,
 )
 data class Channel(val id: String, val name: String, val kind: ChannelKind, val spaceId: String? = null, val position: Int = 0)
 enum class ChannelKind { TEXT, VOICE }
@@ -64,6 +65,7 @@ object PoioJson {
         avatarUrl = value.nullableString("avatarUrl"),
         role = value.nullableString("role"),
         joinSoundUrl = value.nullableString("joinSoundUrl"),
+        leaveSoundUrl = value.nullableString("leaveSoundUrl"),
     )
 
     fun channel(value: JSONObject) = Channel(

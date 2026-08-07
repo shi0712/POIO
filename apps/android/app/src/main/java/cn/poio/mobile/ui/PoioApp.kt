@@ -332,6 +332,9 @@ private fun HomeScreen(
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) actions.updateAvatar(uri)
     }
+    val leaveSoundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) actions.updateLeaveSound(uri)
+    }
     LaunchedEffect(state.error) {
         state.error?.let { snackbar.showSnackbar(it); actions.clearError() }
     }
@@ -658,12 +661,17 @@ private fun HomeScreen(
         VoiceSettingsDialog(
             devices = voiceDeviceState,
             microphoneTestState = microphoneTestState,
+            leaveSoundUrl = state.user?.leaveSoundUrl,
+            soundBusy = state.busy,
             voiceConnected = voiceState is VoiceState.Connecting ||
                 voiceState is VoiceState.Reconnecting ||
                 voiceState is VoiceState.Connected,
             onInputRoute = actions::selectInputRoute,
             onStartTest = onStartMicrophoneTest,
             onStopTest = actions::stopMicrophoneTest,
+            onTestLeaveSound = actions::testLeaveSound,
+            onUploadLeaveSound = { leaveSoundPicker.launch(arrayOf("audio/*")) },
+            onRemoveLeaveSound = { actions.updateLeaveSound(null) },
             onDismiss = {
                 actions.stopMicrophoneTest()
                 settingsDialog = false
@@ -924,10 +932,15 @@ private fun InviteCodeDialog(code: String, onDismiss: () -> Unit) {
 private fun VoiceSettingsDialog(
     devices: VoiceDeviceState,
     microphoneTestState: MicrophoneTestState,
+    leaveSoundUrl: String?,
+    soundBusy: Boolean,
     voiceConnected: Boolean,
     onInputRoute: (Int) -> Unit,
     onStartTest: () -> Unit,
     onStopTest: () -> Unit,
+    onTestLeaveSound: () -> Unit,
+    onUploadLeaveSound: () -> Unit,
+    onRemoveLeaveSound: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -938,6 +951,27 @@ private fun VoiceSettingsDialog(
                 Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                Text("退出提示音", fontWeight = FontWeight.Bold)
+                Text(
+                    if (leaveSoundUrl != null) "已设置自定义退出音；你离开频道时，其他成员会听到它。"
+                    else "当前使用 POIO 默认退出音。支持 2 MB 以内、0.1–4 秒的音频文件。",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onTestLeaveSound, enabled = !soundBusy, modifier = Modifier.weight(1f)) {
+                        Text("试听")
+                    }
+                    Button(onClick = onUploadLeaveSound, enabled = !soundBusy, modifier = Modifier.weight(1f)) {
+                        Text(if (leaveSoundUrl == null) "上传" else "更换")
+                    }
+                }
+                if (leaveSoundUrl != null) {
+                    TextButton(onClick = onRemoveLeaveSound, enabled = !soundBusy, modifier = Modifier.fillMaxWidth()) {
+                        Text("恢复默认退出音")
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
                 Text("输入设备", fontWeight = FontWeight.Bold)
                 Text(
                     if (voiceConnected) "切换麦克风前请先挂断语音" else "所选设备会用于麦克风测试和下次语音连接",

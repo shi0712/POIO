@@ -1,8 +1,8 @@
 {
-  "versionCode": 28,
-  "versionName": "1.0.0",
+  "versionCode": 29,
+  "versionName": "1.0.1",
   "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
-  "sha256": "888A133CC90FA099C31CC32545CCAF1D6646FD93AD2ABEE2DCB3C5B4B29E17E1",
-  "size": 44373099,
-  "notes": "POIO Android 1.0.0 正式版：修复语音提示音的输出路由，进入、退出、关闭/打开麦克风、关闭/打开听筒音效会跟随当前通话设备播放；退出语音后自动回退到媒体音频通道。"
+  "sha256": "4727CEDE493A4A0A07F87A837D46ADF23BC1CAE37829FB926A955F844A4367E8",
+  "size": 44373103,
+  "notes": "POIO Android 1.0.1：新增自定义退出音效。可在语音设置中上传、试听、更换或恢复默认；自己及其他成员退出频道时会播放对应账号的退出音效，加载失败自动回退默认音效。"
 }
