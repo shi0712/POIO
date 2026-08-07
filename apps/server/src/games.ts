@@ -69,7 +69,31 @@ db.exec(`
     PRIMARY KEY(round_id,user_id),
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   );
+  CREATE TABLE IF NOT EXISTS game_gomoku_rooms (
+    id TEXT PRIMARY KEY,
+    space_id TEXT NOT NULL,
+    black_user_id TEXT NOT NULL,
+    white_user_id TEXT,
+    wager INTEGER NOT NULL DEFAULT 100,
+    status TEXT NOT NULL,
+    board_json TEXT NOT NULL,
+    current_color TEXT NOT NULL,
+    winner_user_id TEXT,
+    result TEXT,
+    winning_line_json TEXT NOT NULL DEFAULT '[]',
+    last_move INTEGER,
+    rematch_json TEXT NOT NULL DEFAULT '[]',
+    round_number INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(black_user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(white_user_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY(winner_user_id) REFERENCES users(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_game_gomoku_space_time ON game_gomoku_rooms(space_id,updated_at DESC);
 `);
+const gomokuColumns=db.prepare('PRAGMA table_info(game_gomoku_rooms)').all() as Array<{name:string}>;
+if(!gomokuColumns.some(column=>column.name==='wager'))db.exec('ALTER TABLE game_gomoku_rooms ADD COLUMN wager INTEGER NOT NULL DEFAULT 100');
 
 export const gameEvents=new EventEmitter();
 
@@ -391,8 +415,181 @@ export function cashoutCrash(spaceId:string,userId:string){
   })();emitWallet(userId);emitCrash(spaceId);return {payout:result,state:crashState(spaceId,userId),wallet:gameWallet(userId)};
 }
 
+const GOMOKU_SIZE=15;
+const GOMOKU_CELLS=GOMOKU_SIZE*GOMOKU_SIZE;
+type GomokuColor='black'|'white';
+type GomokuStatus='waiting'|'playing'|'finished';
+type GomokuRow={
+  id:string;spaceId:string;blackUserId:string;whiteUserId?:string;wager:number;status:GomokuStatus;boardJson:string;
+  currentColor:GomokuColor;winnerUserId?:string;result?:string;winningLineJson:string;lastMove?:number;
+  rematchJson:string;roundNumber:number;createdAt:number;updatedAt:number;
+};
+
+function gomokuRow(roomId:string){
+  return db.prepare(`SELECT id,space_id AS spaceId,black_user_id AS blackUserId,white_user_id AS whiteUserId,
+    wager,status,board_json AS boardJson,current_color AS currentColor,winner_user_id AS winnerUserId,result,
+    winning_line_json AS winningLineJson,last_move AS lastMove,rematch_json AS rematchJson,
+    round_number AS roundNumber,created_at AS createdAt,updated_at AS updatedAt
+    FROM game_gomoku_rooms WHERE id=?`).get(roomId) as GomokuRow|undefined;
+}
+
+function gomokuUser(userId:string){
+  const user=db.prepare('SELECT id,username,avatar_url AS avatarUrl FROM users WHERE id=?').get(userId) as {id:string;username:string;avatarUrl?:string}|undefined;
+  if(!user)throw new Error('玩家不存在');
+  return user;
+}
+
+function safeJsonArray<T>(raw:string,fallback:T[]=[]){
+  try{const value=JSON.parse(raw);return Array.isArray(value)?value as T[]:fallback;}catch{return fallback;}
+}
+
+function gomokuBoard(row:GomokuRow){
+  const board=safeJsonArray<null|GomokuColor>(row.boardJson);
+  return board.length===GOMOKU_CELLS?board:Array<null|GomokuColor>(GOMOKU_CELLS).fill(null);
+}
+
+function gomokuPlayers(row:GomokuRow){
+  return [
+    {...gomokuUser(row.blackUserId),color:'black' as const},
+    ...(row.whiteUserId?[{...gomokuUser(row.whiteUserId),color:'white' as const}]:[]),
+  ];
+}
+
+export function gomokuState(roomId:string,userId:string){
+  const row=gomokuRow(roomId);if(!row)throw new Error('五子棋房间不存在');
+  const board=gomokuBoard(row);const players=gomokuPlayers(row);
+  const me=players.find(player=>player.id===userId)?.color??'spectator';
+  const turnUserId=row.currentColor==='black'?row.blackUserId:row.whiteUserId;
+  return {roomId:row.id,spaceId:row.spaceId,wager:row.wager,pot:row.whiteUserId?row.wager*2:row.wager,status:row.status,board,currentColor:row.currentColor,
+    turnUserId,winnerId:row.winnerUserId,result:row.result,winningLine:safeJsonArray<number>(row.winningLineJson),
+    lastMove:row.lastMove,rematchVotes:safeJsonArray<string>(row.rematchJson),roundNumber:row.roundNumber,
+    players,me,canMove:row.status==='playing'&&me===row.currentColor,createdAt:row.createdAt,updatedAt:row.updatedAt};
+}
+
+export function gomokuRooms(spaceId:string,userId:string){
+  const cutoff=Date.now()-6*60*60*1000;
+  db.prepare(`DELETE FROM game_gomoku_rooms WHERE status='finished' AND updated_at<?`).run(cutoff);
+  const rows=db.prepare(`SELECT id,space_id AS spaceId,black_user_id AS blackUserId,white_user_id AS whiteUserId,
+    wager,status,board_json AS boardJson,current_color AS currentColor,winner_user_id AS winnerUserId,result,
+    winning_line_json AS winningLineJson,last_move AS lastMove,rematch_json AS rematchJson,
+    round_number AS roundNumber,created_at AS createdAt,updated_at AS updatedAt
+    FROM game_gomoku_rooms WHERE space_id=? ORDER BY CASE status WHEN 'playing' THEN 0 WHEN 'waiting' THEN 1 ELSE 2 END,updated_at DESC LIMIT 30`).all(spaceId) as GomokuRow[];
+  return rows.map(row=>{
+    const state=gomokuState(row.id,userId);
+    return {roomId:state.roomId,status:state.status,wager:state.wager,pot:state.pot,players:state.players,moveCount:state.board.filter(Boolean).length,
+      roundNumber:state.roundNumber,winnerId:state.winnerId,updatedAt:state.updatedAt,isMine:state.me!=='spectator'};
+  });
+}
+
+function emitGomoku(row:GomokuRow){gameEvents.emit('gomoku:update',{spaceId:row.spaceId,roomId:row.id});}
+
+function activeGomokuRoom(userId:string){
+  return db.prepare(`SELECT id FROM game_gomoku_rooms WHERE status IN ('waiting','playing')
+    AND (black_user_id=? OR white_user_id=?) LIMIT 1`).get(userId,userId) as {id:string}|undefined;
+}
+
+export function gomokuActiveRoomId(userId:string){return activeGomokuRoom(userId)?.id;}
+
+export function createGomokuRoom(spaceId:string,userId:string,wagerValue:number){
+  if(activeGomokuRoom(userId))throw new Error('你已经在一个五子棋房间中');
+  const wager=checkedWager(wagerValue,{multiple:10});const id=nanoid(10);const now=Date.now();
+  const row=db.transaction(()=>{
+    changeBalance(userId,-wager,'wager','gomoku',id);
+    db.prepare(`INSERT INTO game_gomoku_rooms(id,space_id,black_user_id,wager,status,board_json,current_color,winning_line_json,rematch_json,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(id,spaceId,userId,wager,'waiting',JSON.stringify(Array(GOMOKU_CELLS).fill(null)),'black','[]','[]',now,now);
+    return gomokuRow(id)!;
+  })();emitWallet(userId);emitGomoku(row);return gomokuState(id,userId);
+}
+
+export function joinGomokuRoom(roomId:string,spaceId:string,userId:string){
+  const result=db.transaction(()=>{
+    const row=gomokuRow(roomId);if(!row||row.spaceId!==spaceId)throw new Error('五子棋房间不存在');
+    if(row.blackUserId===userId||row.whiteUserId===userId)return row;
+    if(activeGomokuRoom(userId))throw new Error('请先退出当前五子棋房间');
+    if(row.status!=='waiting'||row.whiteUserId)throw new Error('这个房间已经满了');
+    changeBalance(userId,-row.wager,'wager','gomoku',roomId);
+    db.prepare(`UPDATE game_gomoku_rooms SET white_user_id=?,status='playing',updated_at=? WHERE id=?`).run(userId,Date.now(),roomId);
+    return gomokuRow(roomId)!;
+  })();emitWallet(userId);emitGomoku(result);return gomokuState(roomId,userId);
+}
+
+export function watchGomokuRoom(roomId:string,spaceId:string,userId:string){
+  const row=gomokuRow(roomId);if(!row||row.spaceId!==spaceId)throw new Error('五子棋房间不存在');
+  return gomokuState(roomId,userId);
+}
+
+function gomokuWinningLine(board:Array<null|GomokuColor>,cell:number,color:GomokuColor){
+  const row=Math.floor(cell/GOMOKU_SIZE),column=cell%GOMOKU_SIZE;
+  for(const [dr,dc] of [[0,1],[1,0],[1,1],[1,-1]]){
+    const line=[cell];
+    for(const direction of [-1,1])for(let step=1;;step++){
+      const nextRow=row+dr*step*direction,nextColumn=column+dc*step*direction;
+      if(nextRow<0||nextRow>=GOMOKU_SIZE||nextColumn<0||nextColumn>=GOMOKU_SIZE)break;
+      const next=nextRow*GOMOKU_SIZE+nextColumn;if(board[next]!==color)break;
+      direction<0?line.unshift(next):line.push(next);
+    }
+    if(line.length>=5)return line;
+  }
+  return [];
+}
+
+export function playGomokuMove(roomId:string,userId:string,cell:number){
+  if(!Number.isSafeInteger(cell)||cell<0||cell>=GOMOKU_CELLS)throw new Error('落子位置无效');
+  const result=db.transaction(()=>{
+    const row=gomokuRow(roomId);if(!row)throw new Error('五子棋房间不存在');
+    if(row.status!=='playing')throw new Error('当前棋局尚未开始');
+    const color:GomokuColor=row.blackUserId===userId?'black':row.whiteUserId===userId?'white':(()=>{throw new Error('你不是本局玩家')})();
+    if(row.currentColor!==color)throw new Error('还没有轮到你');
+    const board=gomokuBoard(row);if(board[cell])throw new Error('这里已经有棋子了');
+    board[cell]=color;const winningLine=gomokuWinningLine(board,cell,color);const draw=!winningLine.length&&board.every(Boolean);
+    const status:GomokuStatus=winningLine.length||draw?'finished':'playing';
+    const winnerId=winningLine.length?userId:null;const gameResult=winningLine.length?'five':draw?'draw':null;
+    if(winnerId)changeBalance(winnerId,row.wager*2,'payout','gomoku',roomId);
+    else if(draw){changeBalance(row.blackUserId,row.wager,'payout','gomoku',roomId);if(row.whiteUserId)changeBalance(row.whiteUserId,row.wager,'payout','gomoku',roomId);}
+    db.prepare(`UPDATE game_gomoku_rooms SET board_json=?,current_color=?,status=?,winner_user_id=?,result=?,
+      winning_line_json=?,last_move=?,rematch_json='[]',updated_at=? WHERE id=?`).run(JSON.stringify(board),color==='black'?'white':'black',status,winnerId,gameResult,JSON.stringify(winningLine),cell,Date.now(),roomId);
+    return gomokuRow(roomId)!;
+  })();if(result.status==='finished'){emitWallet(result.blackUserId);if(result.whiteUserId)emitWallet(result.whiteUserId);}emitGomoku(result);return gomokuState(roomId,userId);
+}
+
+export function resignGomoku(roomId:string,userId:string){
+  const result=db.transaction(()=>{
+    const row=gomokuRow(roomId);if(!row)throw new Error('五子棋房间不存在');
+    if(row.status!=='playing')throw new Error('当前没有进行中的棋局');
+    if(userId!==row.blackUserId&&userId!==row.whiteUserId)throw new Error('你不是本局玩家');
+    const winnerId=userId===row.blackUserId?row.whiteUserId:row.blackUserId;
+    if(winnerId)changeBalance(winnerId,row.wager*2,'payout','gomoku',roomId);
+    db.prepare(`UPDATE game_gomoku_rooms SET status='finished',winner_user_id=?,result='resign',rematch_json='[]',updated_at=? WHERE id=?`).run(winnerId,Date.now(),roomId);
+    return gomokuRow(roomId)!;
+  })();emitWallet(result.blackUserId);if(result.whiteUserId)emitWallet(result.whiteUserId);emitGomoku(result);return gomokuState(roomId,userId);
+}
+
+export function rematchGomoku(roomId:string,userId:string){
+  const result=db.transaction(()=>{
+    const row=gomokuRow(roomId);if(!row)throw new Error('五子棋房间不存在');
+    if(row.status!=='finished'||!row.whiteUserId)throw new Error('当前不能再来一局');
+    if(userId!==row.blackUserId&&userId!==row.whiteUserId)throw new Error('只有本局玩家可以发起再来一局');
+    const votes=[...new Set([...safeJsonArray<string>(row.rematchJson),userId])];
+    if(votes.includes(row.blackUserId)&&votes.includes(row.whiteUserId)){
+      changeBalance(row.blackUserId,-row.wager,'wager','gomoku',roomId);
+      changeBalance(row.whiteUserId,-row.wager,'wager','gomoku',roomId);
+      db.prepare(`UPDATE game_gomoku_rooms SET black_user_id=?,white_user_id=?,status='playing',board_json=?,current_color='black',
+        winner_user_id=NULL,result=NULL,winning_line_json='[]',last_move=NULL,rematch_json='[]',round_number=round_number+1,updated_at=? WHERE id=?`)
+        .run(row.whiteUserId,row.blackUserId,JSON.stringify(Array(GOMOKU_CELLS).fill(null)),Date.now(),roomId);
+    }else db.prepare(`UPDATE game_gomoku_rooms SET rematch_json=?,updated_at=? WHERE id=?`).run(JSON.stringify(votes),Date.now(),roomId);
+    return gomokuRow(roomId)!;
+  })();if(result.status==='playing'){emitWallet(result.blackUserId);if(result.whiteUserId)emitWallet(result.whiteUserId);}emitGomoku(result);return gomokuState(roomId,userId);
+}
+
+export function leaveGomokuRoom(roomId:string,userId:string){
+  const row=gomokuRow(roomId);if(!row)return true;
+  if(row.status==='waiting'&&row.blackUserId===userId){db.transaction(()=>{changeBalance(userId,row.wager,'payout','gomoku',roomId);db.prepare('DELETE FROM game_gomoku_rooms WHERE id=?').run(roomId);})();emitWallet(userId);emitGomoku(row);return true;}
+  if(row.status==='playing'&&(row.blackUserId===userId||row.whiteUserId===userId)){resignGomoku(roomId,userId);return true;}
+  return true;
+}
+
 export function gameOverview(userId:string,spaceId?:string){
   return {wallet:gameWallet(userId),ledger:gameLedger(userId,12),history:gameHistory(userId,12),
     blackjack:blackjackState(userId),mines:minesState(userId),slots:slotState(userId),
-    crash:spaceId?crashState(spaceId,userId):undefined};
+    crash:spaceId?crashState(spaceId,userId):undefined,gomokuRooms:spaceId?gomokuRooms(spaceId,userId):[]};
 }

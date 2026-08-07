@@ -355,6 +355,7 @@ private fun HomeScreen(
             if (hasConnectedOnce) connectionWasLost = true
         }
     }
+    LaunchedEffect(state.games.open) { if (state.games.open) gameOpen = true }
     val openChannel: (Channel) -> Unit = { channel ->
         actions.selectChannel(channel.id)
         if (channel.kind == ChannelKind.VOICE && state.voiceChannelId != channel.id) {
@@ -372,6 +373,7 @@ private fun HomeScreen(
             GameCenterScreen(
                 state = state.games,
                 spaceId = state.selectedSpaceId.orEmpty(),
+                onlineMembers = state.communityMembers.filter { it.id in state.onlineUserIds },
                 busy = state.busy,
                 actions = actions,
                 onBack = {
@@ -509,6 +511,19 @@ private fun HomeScreen(
         spaceDialog = null
     } }
     if (channelDialog) ChannelDialog(onDismiss = { channelDialog = false }) { name, voice -> actions.createChannel(name, voice); channelDialog = false }
+    state.gomokuInvitation?.let { invitation ->
+        AlertDialog(
+            onDismissRequest = actions::dismissGomokuInvitation,
+            icon = { Icon(Icons.Default.SportsEsports, null, tint = Color(0xFFC9A66B)) },
+            title = { Text("五子棋对局邀请", fontWeight = FontWeight.Black) },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text("${invitation.inviter.username} 邀请你加入房间")
+                Text("每人 ${invitation.wager} 积分 · 奖池 ${invitation.pot}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } },
+            dismissButton = { TextButton(onClick = actions::dismissGomokuInvitation) { Text("稍后") } },
+            confirmButton = { Button(onClick = actions::acceptGomokuInvitation) { Text("加入棋局") } },
+        )
+    }
     pendingVoiceJoin?.let { channel ->
         ModalBottomSheet(
             onDismissRequest = { pendingVoiceJoin = null },

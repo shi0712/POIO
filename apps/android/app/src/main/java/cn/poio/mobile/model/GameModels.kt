@@ -80,6 +80,55 @@ data class CrashGame(
     val proof: FairProof,
 )
 
+data class GomokuPlayer(
+    val id: String,
+    val username: String,
+    val avatarUrl: String? = null,
+    val color: String,
+)
+
+data class GomokuInvitation(
+    val spaceId: String,
+    val roomId: String,
+    val wager: Long,
+    val pot: Long,
+    val inviter: User,
+    val expiresAt: Long,
+)
+
+data class GomokuRoom(
+    val roomId: String,
+    val status: String,
+    val wager: Long,
+    val pot: Long,
+    val players: List<GomokuPlayer>,
+    val moveCount: Int,
+    val roundNumber: Int,
+    val winnerId: String? = null,
+    val updatedAt: Long,
+    val isMine: Boolean,
+)
+
+data class GomokuGame(
+    val roomId: String,
+    val spaceId: String,
+    val wager: Long,
+    val pot: Long,
+    val status: String,
+    val board: List<String?>,
+    val currentColor: String,
+    val turnUserId: String? = null,
+    val winnerId: String? = null,
+    val result: String? = null,
+    val winningLine: List<Int>,
+    val lastMove: Int? = null,
+    val rematchVotes: List<String>,
+    val roundNumber: Int,
+    val players: List<GomokuPlayer>,
+    val me: String,
+    val canMove: Boolean,
+)
+
 data class GameCenterState(
     val loading: Boolean = false,
     val open: Boolean = false,
@@ -88,9 +137,16 @@ data class GameCenterState(
     val mines: MinesGame? = null,
     val slots: SlotSpin? = null,
     val crash: CrashGame? = null,
+    val gomokuRooms: List<GomokuRoom> = emptyList(),
+    val gomoku: GomokuGame? = null,
 )
 
 object GameJson {
+    fun gomokuInvitation(value: JSONObject) = GomokuInvitation(
+        spaceId = value.optString("spaceId"), roomId = value.optString("roomId"),
+        wager = value.optLong("wager"), pot = value.optLong("pot"),
+        inviter = PoioJson.user(value.getJSONObject("inviter")), expiresAt = value.optLong("expiresAt"),
+    )
     fun wallet(value: JSONObject) = GameWallet(
         balance = value.optLong("balance"),
         lastDaily = value.optLong("lastDaily"),
@@ -170,6 +226,40 @@ object GameJson {
             multiplier = it.optDouble("multiplier", 1.0), bettingEndsAt = it.optLong("bettingEndsAt"),
             bets = it.optJSONArray("bets").objects().map(::crashBet),
             myBet = it.optJSONObject("myBet")?.let(::crashBet), proof = proof(it.optJSONObject("proof")),
+        )
+    }
+
+    private fun gomokuPlayer(value: JSONObject) = GomokuPlayer(
+        id = value.optString("id"), username = value.optString("username"),
+        avatarUrl = value.optString("avatarUrl").takeIf(String::isNotBlank), color = value.optString("color"),
+    )
+
+    fun gomokuRooms(value: org.json.JSONArray?) = value.objects().map {
+        GomokuRoom(
+            roomId = it.optString("roomId"), status = it.optString("status"),
+            wager = it.optLong("wager"), pot = it.optLong("pot"),
+            players = it.optJSONArray("players").objects().map(::gomokuPlayer), moveCount = it.optInt("moveCount"),
+            roundNumber = it.optInt("roundNumber", 1),
+            winnerId = it.optString("winnerId").takeIf(String::isNotBlank), updatedAt = it.optLong("updatedAt"),
+            isMine = it.optBoolean("isMine"),
+        )
+    }
+
+    fun gomoku(value: JSONObject?) = value?.let {
+        val board = buildList<String?> {
+            val cells = it.optJSONArray("board")
+            if (cells != null) for (index in 0 until cells.length()) add(if (cells.isNull(index)) null else cells.optString(index).takeIf(String::isNotBlank))
+        }
+        GomokuGame(
+            roomId = it.optString("roomId"), spaceId = it.optString("spaceId"), wager = it.optLong("wager"), pot = it.optLong("pot"), status = it.optString("status"),
+            board = board, currentColor = it.optString("currentColor"),
+            turnUserId = it.optString("turnUserId").takeIf(String::isNotBlank),
+            winnerId = it.optString("winnerId").takeIf(String::isNotBlank), result = it.optString("result").takeIf(String::isNotBlank),
+            winningLine = ints(it.optJSONArray("winningLine")),
+            lastMove = it.takeIf { json -> json.has("lastMove") && !json.isNull("lastMove") }?.optInt("lastMove"),
+            rematchVotes = buildList { val votes = it.optJSONArray("rematchVotes"); if (votes != null) for (index in 0 until votes.length()) add(votes.optString(index)) },
+            roundNumber = it.optInt("roundNumber", 1), players = it.optJSONArray("players").objects().map(::gomokuPlayer),
+            me = it.optString("me", "spectator"), canMove = it.optBoolean("canMove"),
         )
     }
 }

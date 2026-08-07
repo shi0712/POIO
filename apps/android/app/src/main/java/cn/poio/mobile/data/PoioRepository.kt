@@ -11,6 +11,7 @@ import cn.poio.mobile.model.DirectConversation
 import cn.poio.mobile.model.DirectMessage
 import cn.poio.mobile.model.GameCenterState
 import cn.poio.mobile.model.GameJson
+import cn.poio.mobile.model.GomokuInvitation
 import cn.poio.mobile.model.PoioJson
 import cn.poio.mobile.model.ServerCapabilities
 import cn.poio.mobile.model.Space
@@ -55,10 +56,12 @@ data class PoioState(
     val voiceChannelId: String? = null,
     val voiceMembers: Map<String, List<User>> = emptyMap(),
     val communityMembers: List<User> = emptyList(),
+    val onlineUserIds: Set<String> = emptySet(),
     val directConversations: List<DirectConversation> = emptyList(),
     val directPeer: User? = null,
     val directMessages: List<DirectMessage> = emptyList(),
     val games: GameCenterState = GameCenterState(),
+    val gomokuInvitation: GomokuInvitation? = null,
     val inviteCode: String? = null,
     /** Increments only after this Socket.IO connection has authenticated. */
     val authenticatedConnectionGeneration: Long = 0,
@@ -144,6 +147,14 @@ class PoioRepository(
             val spaceId = value.optString("spaceId")
             if (spaceId == mutableState.value.selectedSpaceId) scope.launch { loadCommunityMembers(spaceId) }
         }
+        client.on("space:presence") { args ->
+            val value = args.firstOrNull() as? JSONObject ?: return@on
+            if (value.optString("spaceId") != mutableState.value.selectedSpaceId) return@on
+            val userIds = value.optJSONArray("userIds")
+            mutableState.value = mutableState.value.copy(onlineUserIds = buildSet {
+                if (userIds != null) for (index in 0 until userIds.length()) add(userIds.optString(index))
+            })
+        }
         client.on("voice:presence") { args ->
             val value = args.firstOrNull() as? JSONObject ?: return@on
             val channelId = value.optString("channelId").takeIf(String::isNotBlank) ?: return@on
@@ -180,6 +191,30 @@ class PoioRepository(
             mutableState.value = mutableState.value.copy(
                 games = mutableState.value.games.copy(crash = GameJson.crash(value)),
             )
+        }
+        client.on("game:gomoku:rooms") { args ->
+            val value = args.firstOrNull() as? org.json.JSONArray ?: return@on
+            mutableState.value = mutableState.value.copy(
+                games = mutableState.value.games.copy(gomokuRooms = GameJson.gomokuRooms(value)),
+            )
+        }
+        client.on("game:gomoku:state") { args ->
+            val value = args.firstOrNull() as? JSONObject ?: return@on
+            mutableState.value = mutableState.value.copy(
+                games = mutableState.value.games.copy(gomoku = GameJson.gomoku(value)),
+            )
+        }
+        client.on("game:gomoku:invited") { args ->
+            val value = args.firstOrNull() as? JSONObject ?: return@on
+            val invitation = runCatching { GameJson.gomokuInvitation(value) }.getOrNull() ?: return@on
+            if (invitation.expiresAt <= System.currentTimeMillis()) return@on
+            mutableState.value = mutableState.value.copy(gomokuInvitation = invitation)
+            scope.launch {
+                delay((invitation.expiresAt - System.currentTimeMillis()).coerceAtLeast(0))
+                if (mutableState.value.gomokuInvitation?.roomId == invitation.roomId) {
+                    mutableState.value = mutableState.value.copy(gomokuInvitation = null)
+                }
+            }
         }
         client.connect(
             onConnected = {
@@ -431,6 +466,7 @@ class PoioRepository(
                     blackjack = GameJson.blackjack(value.optJSONObject("blackjack")),
                     mines = GameJson.mines(value.optJSONObject("mines")),
                     crash = GameJson.crash(value.optJSONObject("crash")),
+                    gomokuRooms = GameJson.gomokuRooms(value.optJSONArray("gomokuRooms")),
                 ),
             )
         }
@@ -440,6 +476,18 @@ class PoioRepository(
     suspend fun leaveGameCenter() {
         runCatching { client.request("game:leave", JSONObject()) }
         mutableState.value = mutableState.value.copy(games = GameCenterState())
+    }
+
+    fun dismissGomokuInvitation() {
+        mutableState.value = mutableState.value.copy(gomokuInvitation = null)
+    }
+
+    suspend fun acceptGomokuInvitation() {
+        val invitation = mutableState.value.gomokuInvitation ?: return
+        selectSpace(invitation.spaceId)
+        enterGameCenter(invitation.spaceId)
+        openGomoku(invitation.spaceId, invitation.roomId, true)
+        if (mutableState.value.games.gomoku?.roomId == invitation.roomId) dismissGomokuInvitation()
     }
 
     suspend fun claimGameDaily() = gameRequest("game:daily", JSONObject()) { value ->
@@ -477,6 +525,40 @@ class PoioRepository(
     suspend fun cashoutCrash(spaceId: String) = gameResponse(
         "game:crash:cashout", JSONObject().put("spaceId", spaceId), "crash",
     )
+
+    suspend fun createGomoku(spaceId: String, wager: Long) = gomokuRequest(
+        "game:gomoku:create", JSONObject().put("spaceId", spaceId).put("wager", wager),
+    )
+
+    suspend fun openGomoku(spaceId: String, roomId: String, join: Boolean) = gomokuRequest(
+        if (join) "game:gomoku:join" else "game:gomoku:watch",
+        JSONObject().put("spaceId", spaceId).put("roomId", roomId),
+    )
+
+    suspend fun playGomokuMove(roomId: String, cell: Int) = gomokuRequest(
+        "game:gomoku:move", JSONObject().put("roomId", roomId).put("cell", cell),
+    )
+
+    suspend fun resignGomoku(roomId: String) = gomokuRequest(
+        "game:gomoku:resign", JSONObject().put("roomId", roomId),
+    )
+
+    suspend fun rematchGomoku(roomId: String) = gomokuRequest(
+        "game:gomoku:rematch", JSONObject().put("roomId", roomId),
+    )
+
+    suspend fun leaveGomoku(roomId: String) = guarded {
+        client.request("game:gomoku:leave", JSONObject().put("roomId", roomId))
+        mutableState.value = mutableState.value.copy(games = mutableState.value.games.copy(gomoku = null))
+    }
+
+    suspend fun inviteGomoku(spaceId: String, roomId: String, targetUserId: String) = guarded {
+        client.request("game:gomoku:invite", JSONObject().put("spaceId", spaceId).put("roomId", roomId).put("targetUserId", targetUserId))
+    }
+
+    private suspend fun gomokuRequest(event: String, payload: JSONObject) = gameRequest(event, payload) { value ->
+        mutableState.value.games.copy(gomoku = GameJson.gomoku(value))
+    }
 
     private suspend fun gameResponse(event: String, payload: JSONObject, game: String) = gameRequest(event, payload) { value ->
         val current = mutableState.value.games
@@ -585,11 +667,13 @@ class PoioRepository(
 
     private suspend fun loadCommunityMembers(spaceId: String) {
         val value = client.request("space:members", JSONObject().put("spaceId", spaceId)) as JSONArray
+        val presence = client.request("space:presence", JSONObject().put("spaceId", spaceId)) as JSONArray
         if (mutableState.value.selectedSpaceId == spaceId) {
             val members = value.objects().map(PoioJson::user)
             val memberIds = members.mapTo(mutableSetOf(), User::id)
             mutableState.value = mutableState.value.copy(
                 communityMembers = members,
+                onlineUserIds = buildSet { for (index in 0 until presence.length()) add(presence.optString(index)) },
                 directPeer = mutableState.value.directPeer?.takeIf { it.id in memberIds },
             )
         }

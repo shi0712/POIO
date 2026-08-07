@@ -141,6 +141,15 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
     override fun spinSlots(wager: Long, useFreeSpin: Boolean) { viewModelScope.launch { repository.spinSlots(wager, useFreeSpin) } }
     override fun placeCrashBet(spaceId: String, wager: Long) { viewModelScope.launch { repository.placeCrashBet(spaceId, wager) } }
     override fun cashoutCrash(spaceId: String) { viewModelScope.launch { repository.cashoutCrash(spaceId) } }
+    override fun createGomoku(spaceId: String, wager: Long) { viewModelScope.launch { repository.createGomoku(spaceId, wager) } }
+    override fun openGomoku(spaceId: String, roomId: String, join: Boolean) { viewModelScope.launch { repository.openGomoku(spaceId, roomId, join) } }
+    override fun playGomokuMove(roomId: String, cell: Int) { viewModelScope.launch { repository.playGomokuMove(roomId, cell) } }
+    override fun resignGomoku(roomId: String) { viewModelScope.launch { repository.resignGomoku(roomId) } }
+    override fun rematchGomoku(roomId: String) { viewModelScope.launch { repository.rematchGomoku(roomId) } }
+    override fun leaveGomoku(roomId: String) { viewModelScope.launch { repository.leaveGomoku(roomId) } }
+    override fun acceptGomokuInvitation() { viewModelScope.launch { repository.acceptGomokuInvitation() } }
+    override fun dismissGomokuInvitation() = repository.dismissGomokuInvitation()
+    override fun inviteGomoku(spaceId: String, roomId: String, targetUserId: String) { viewModelScope.launch { repository.inviteGomoku(spaceId, roomId, targetUserId) } }
     override fun joinVoice(channelId: String) {
         viewModelScope.launch {
             runCatching {
@@ -330,6 +339,15 @@ interface PoioActions {
     fun spinSlots(wager: Long, useFreeSpin: Boolean)
     fun placeCrashBet(spaceId: String, wager: Long)
     fun cashoutCrash(spaceId: String)
+    fun createGomoku(spaceId: String, wager: Long)
+    fun openGomoku(spaceId: String, roomId: String, join: Boolean)
+    fun playGomokuMove(roomId: String, cell: Int)
+    fun resignGomoku(roomId: String)
+    fun rematchGomoku(roomId: String)
+    fun leaveGomoku(roomId: String)
+    fun acceptGomokuInvitation()
+    fun dismissGomokuInvitation()
+    fun inviteGomoku(spaceId: String, roomId: String, targetUserId: String)
     fun joinVoice(channelId: String)
     fun leaveVoice()
     fun setMuted(muted: Boolean)

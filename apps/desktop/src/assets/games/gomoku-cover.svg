@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#201a38"/><stop offset="1" stop-color="#0d111a"/></linearGradient>
+    <radialGradient id="glow"><stop stop-color="#9f86ff" stop-opacity=".52"/><stop offset="1" stop-color="#7055ff" stop-opacity="0"/></radialGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="14" stdDeviation="14" flood-opacity=".42"/></filter>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse"><path d="M36 0H0V36" fill="none" stroke="#c8bfff" stroke-opacity=".28" stroke-width="2"/></pattern>
+  </defs>
+  <rect width="720" height="420" rx="36" fill="url(#bg)"/>
+  <circle cx="535" cy="118" r="210" fill="url(#glow)"/>
+  <g transform="translate(218 45) rotate(-5 170 160)" filter="url(#shadow)">
+    <rect width="340" height="330" rx="24" fill="#cda86e"/>
+    <rect x="26" y="22" width="288" height="288" fill="url(#grid)"/>
+    <g fill="#10131a">
+      <circle cx="98" cy="94" r="16"/><circle cx="134" cy="130" r="16"/><circle cx="170" cy="166" r="16"/><circle cx="206" cy="202" r="16"/><circle cx="242" cy="238" r="16"/>
+    </g>
+    <g fill="#f7f3ea" stroke="#d4d0c8" stroke-width="2">
+      <circle cx="206" cy="94" r="16"/><circle cx="170" cy="130" r="16"/><circle cx="134" cy="166" r="16"/><circle cx="98" cy="202" r="16"/>
+    </g>
+    <circle cx="242" cy="238" r="25" fill="none" stroke="#d6ff5e" stroke-width="4" opacity=".9"/>
+  </g>
+  <g fill="#fff" font-family="Arial,sans-serif" font-weight="900"><text x="42" y="66" font-size="18" letter-spacing="5" fill="#a994ff">POIO DUEL</text><text x="42" y="108" font-size="38">五子棋</text><text x="42" y="136" font-size="14" fill="#a9a8b6">实时联机 · 服务端裁判</text></g>
+</svg>

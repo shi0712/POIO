@@ -71,6 +71,40 @@ test('wallet ledger and all turn-based games are server authoritative',async()=>
   assert.ok(games.gameLedger(userId,50).length>=5);
 });
 
+test('gomoku rooms synchronize players, reject invalid turns and detect five in a row',async()=>{
+  const first=(await database.register(`gomoku_a_${Date.now()}`,'Gomoku-test-password')).user;
+  const second=(await database.register(`gomoku_b_${Date.now()}`,'Gomoku-test-password')).user;
+  const spaceId='gomoku-test-space';
+  const waiting=games.createGomokuRoom(spaceId,first.id,200);
+  assert.equal(waiting.status,'waiting');
+  assert.equal(waiting.me,'black');
+  assert.equal(waiting.wager,200);
+  assert.equal(games.gameWallet(first.id).balance,9_800);
+  const joined=games.joinGomokuRoom(waiting.roomId,spaceId,second.id);
+  assert.equal(joined.status,'playing');
+  assert.equal(joined.players.length,2);
+  assert.equal(joined.pot,400);
+  assert.equal(games.gameWallet(second.id).balance,9_800);
+  assert.throws(()=>games.playGomokuMove(waiting.roomId,second.id,15),/轮到/);
+  const sequence=[[first.id,0],[second.id,15],[first.id,1],[second.id,16],[first.id,2],[second.id,17],[first.id,3],[second.id,18],[first.id,4]] as const;
+  let state=joined;
+  for(const [userId,cell] of sequence)state=games.playGomokuMove(waiting.roomId,userId,cell);
+  assert.equal(state.status,'finished');
+  assert.equal(state.winnerId,first.id);
+  assert.deepEqual(state.winningLine,[0,1,2,3,4]);
+  assert.equal(games.gameWallet(first.id).balance,10_200);
+  assert.equal(games.gameWallet(second.id).balance,9_800);
+  assert.throws(()=>games.playGomokuMove(waiting.roomId,second.id,19));
+  state=games.rematchGomoku(waiting.roomId,first.id);
+  assert.equal(state.rematchVotes.length,1);
+  state=games.rematchGomoku(waiting.roomId,second.id);
+  assert.equal(state.status,'playing');
+  assert.equal(state.roundNumber,2);
+  assert.equal(state.players.find((player:any)=>player.id===second.id)?.color,'black');
+  assert.equal(games.gameWallet(first.id).balance,10_000);
+  assert.equal(games.gameWallet(second.id).balance,9_600);
+});
+
 test.after(()=>{
   database.db.close();
   for(const suffix of ['','-shm','-wal'])rmSync(`${databasePath}${suffix}`,{force:true});

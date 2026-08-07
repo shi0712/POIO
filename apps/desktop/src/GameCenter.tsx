@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Bomb, Check, Coins, Crown, Dices, Gift, History, Pickaxe, Play, Rocket, ShieldCheck, Sparkles, Spade, Volume2, X } from 'lucide-react';
+import { ArrowLeft, Bomb, Check, CircleDot, Coins, Crown, Dices, Eye, Gift, History, LogOut, Pickaxe, Play, Rocket, ShieldCheck, Sparkles, Spade, Swords, UserPlus, Volume2, X } from 'lucide-react';
 import { request, socket } from './api';
 import gameHero from './assets/games/poio-game-center-hero.png';
 import blackjackCover from './assets/games/blackjack-cover.png';
 import minesCover from './assets/games/mines-cover.png';
 import crashCover from './assets/games/crash-cover.png';
 import slotsCover from './assets/games/slots-cover.png';
+import gomokuCover from './assets/games/gomoku-cover.svg';
 import './games.css';
 
-type GameId='lobby'|'blackjack'|'mines'|'crash'|'slots';
+type GameId='lobby'|'blackjack'|'mines'|'crash'|'slots'|'gomoku';
 type Wallet={balance:number;lastDaily:number;nextDailyAt:number;dailyReward:number;freeSpins:number;freeWager:number};
 type FairProof={serverSeedHash:string;clientSeed:string;nonce:number;serverSeed?:string;crashAt?:number};
 type CardData={rank?:string;suit?:'spades'|'hearts'|'diamonds'|'clubs';hidden?:boolean};
@@ -18,15 +19,21 @@ type SlotSymbol='duck'|'bolt'|'gem'|'crown'|'star'|'wild'|'scatter';
 type SlotSpin={id:string;wager:number;freeSpin:boolean;grid:SlotSymbol[][];wins:Array<{line:number;symbol:SlotSymbol;count:number;payout:number}>;scatterCount:number;scatterPayout:number;freeSpinsAwarded:number;payout:number;proof:FairProof};
 type CrashBet={userId:string;username:string;wager:number;status:'playing'|'cashed'|'lost';cashoutMultiplier?:number;payout:number};
 type CrashState={spaceId:string;roundId:string;phase:'betting'|'running'|'crashed';multiplier:number;bettingEndsAt:number;startedAt?:number;endedAt?:number;bets:CrashBet[];myBet?:CrashBet;proof:FairProof};
+type GomokuColor='black'|'white';
+type GomokuPlayer={id:string;username:string;avatarUrl?:string;color:GomokuColor};
+type GomokuRoom={roomId:string;status:'waiting'|'playing'|'finished';wager:number;pot:number;players:GomokuPlayer[];moveCount:number;roundNumber:number;winnerId?:string;updatedAt:number;isMine:boolean};
+type GomokuState={roomId:string;spaceId:string;wager:number;pot:number;status:'waiting'|'playing'|'finished';board:Array<GomokuColor|null>;currentColor:GomokuColor;turnUserId?:string;winnerId?:string;result?:'five'|'draw'|'resign';winningLine:number[];lastMove?:number;rematchVotes:string[];roundNumber:number;players:GomokuPlayer[];me:GomokuColor|'spectator';canMove:boolean;createdAt:number;updatedAt:number};
+type GameInviteMember={id:string;username:string;avatarUrl?:string};
 type LedgerEntry={id:string;amount:number;balanceAfter:number;kind:string;game?:string;roundId?:string;createdAt:number};
 type GameRound={id:string;game:string;wager:number;payout:number;outcome:string;createdAt:number;completedAt:number};
-type Overview={wallet:Wallet;ledger:LedgerEntry[];history:GameRound[];blackjack?:BlackjackState;mines?:MinesState;slots:{freeSpins:number;freeWager:number};crash?:CrashState};
+type Overview={wallet:Wallet;ledger:LedgerEntry[];history:GameRound[];blackjack?:BlackjackState;mines?:MinesState;slots:{freeSpins:number;freeWager:number};crash?:CrashState;gomokuRooms:GomokuRoom[]};
 
 const games:Array<{id:Exclude<GameId,'lobby'>;name:string;eyebrow:string;description:string;accent:string;art:string;icon:typeof Spade}>=[
   {id:'blackjack',name:'21 点',eyebrow:'BLACKJACK',description:'要牌、停牌、加倍，与庄家正面对决。',accent:'#9d7cff',art:blackjackCover,icon:Spade},
   {id:'mines',name:'Mines',eyebrow:'MINES',description:'翻开安全水晶，随时收下不断上涨的倍率。',accent:'#42dfce',art:minesCover,icon:Bomb},
   {id:'crash',name:'Crash',eyebrow:'CRASH',description:'火箭升空后及时结算，与社区成员共享同一轮。',accent:'#d5ff58',art:crashCover,icon:Rocket},
   {id:'slots',name:'霓虹转轴',eyebrow:'SLOTS',description:'10 条中奖线、Wild、Scatter 与免费旋转。',accent:'#ff75bc',art:slotsCover,icon:Crown},
+  {id:'gomoku',name:'联机五子棋',eyebrow:'GOMOKU DUEL',description:'创建棋桌，和社区成员实时对弈，支持观战与再战。',accent:'#c9a66b',art:gomokuCover,icon:CircleDot},
 ];
 
 const symbolMeta:Record<SlotSymbol,{label:string;className:string}>={
@@ -51,11 +58,13 @@ function playGameSound(kind:'tap'|'win'|'lose'|'spin'|'cash'){
   }catch{}
 }
 
-export default function GameCenter({spaceId,spaceName,onClose,onError}:{spaceId:string;spaceName:string;onClose:()=>void;onError:(error:unknown)=>void}){
+export default function GameCenter({spaceId,spaceName,onlineMembers,joinRoomId,onJoinRoomHandled,onClose,onError}:{spaceId:string;spaceName:string;onlineMembers:GameInviteMember[];joinRoomId?:string;onJoinRoomHandled:()=>void;onClose:()=>void;onError:(error:unknown)=>void}){
   const [active,setActive]=useState<GameId>('lobby');const [overview,setOverview]=useState<Overview>();const [loading,setLoading]=useState(true);
   const [historyOpen,setHistoryOpen]=useState(false);const [soundEnabled,setSoundEnabled]=useState(true);
-  const [blackjackBet,setBlackjackBet]=useState(100);const [minesBet,setMinesBet]=useState(100);const [mineCount,setMineCount]=useState(5);const [slotBet,setSlotBet]=useState(100);const [crashBet,setCrashBet]=useState(100);
+  const [blackjackBet,setBlackjackBet]=useState(100);const [minesBet,setMinesBet]=useState(100);const [mineCount,setMineCount]=useState(5);const [slotBet,setSlotBet]=useState(100);const [crashBet,setCrashBet]=useState(100);const [gomokuBet,setGomokuBet]=useState(100);
   const [busy,setBusy]=useState(false);const [slotSpin,setSlotSpin]=useState<SlotSpin>();const [spinning,setSpinning]=useState(false);const [crashTrace,setCrashTrace]=useState<number[]>([1]);
+  const [gomoku,setGomoku]=useState<GomokuState>();
+  const [gomokuInviteOpen,setGomokuInviteOpen]=useState(false);const [gomokuInviteBusy,setGomokuInviteBusy]=useState('');const [gomokuInvited,setGomokuInvited]=useState<string[]>([]);
   const crashRound=useRef('');
   const wallet=overview?.wallet;
 
@@ -72,9 +81,18 @@ export default function GameCenter({spaceId,spaceName,onClose,onError}:{spaceId:
     request<Overview>('game:enter',{spaceId}).then(value=>{if(!disposed){setOverview(value);setLoading(false)}}).catch(error=>{if(!disposed){setLoading(false);onError(error)}});
     const walletUpdate=(next:Wallet)=>setOverview(current=>current?{...current,wallet:next,slots:{freeSpins:next.freeSpins,freeWager:next.freeWager}}:current);
     const crashUpdate=(next:CrashState)=>setOverview(current=>current?{...current,crash:next}:current);
-    socket.on('game:wallet',walletUpdate);socket.on('game:crash',crashUpdate);
-    return()=>{disposed=true;socket.off('game:wallet',walletUpdate);socket.off('game:crash',crashUpdate);void request('game:leave').catch(()=>{})};
+    const gomokuRoomsUpdate=(rooms:GomokuRoom[])=>setOverview(current=>current?{...current,gomokuRooms:rooms}:current);
+    const gomokuStateUpdate=(state:GomokuState)=>setGomoku(current=>!current||current.roomId===state.roomId?state:current);
+    socket.on('game:wallet',walletUpdate);socket.on('game:crash',crashUpdate);socket.on('game:gomoku:rooms',gomokuRoomsUpdate);socket.on('game:gomoku:state',gomokuStateUpdate);
+    return()=>{disposed=true;socket.off('game:wallet',walletUpdate);socket.off('game:crash',crashUpdate);socket.off('game:gomoku:rooms',gomokuRoomsUpdate);socket.off('game:gomoku:state',gomokuStateUpdate);void request('game:leave').catch(()=>{})};
   },[spaceId]);
+
+  useEffect(()=>{
+    if(!joinRoomId)return;
+    let disposed=false;setActive('gomoku');setBusy(true);
+    request<GomokuState>('game:gomoku:join',{spaceId,roomId:joinRoomId}).then(state=>{if(!disposed){setGomoku(state);soundEnabled&&playGameSound('tap')}}).catch(error=>{if(!disposed)onError(error)}).finally(()=>{if(!disposed){setBusy(false);onJoinRoomHandled()}});
+    return()=>{disposed=true};
+  },[joinRoomId,spaceId]);
 
   useEffect(()=>{
     const crash=overview?.crash;if(!crash)return;
@@ -110,6 +128,18 @@ export default function GameCenter({spaceId,spaceName,onClose,onError}:{spaceId:
   };
   const placeCrash=()=>void act(()=>request<{state:CrashState;wallet:Wallet}>('game:crash:bet',{spaceId,wager:crashBet}),value=>{setOverview(current=>current?{...current,wallet:value.wallet,crash:value.state}:current);sound('tap')});
   const cashCrash=()=>void act(()=>request<{state:CrashState;wallet:Wallet}>('game:crash:cashout',{spaceId}),value=>{setOverview(current=>current?{...current,wallet:value.wallet,crash:value.state}:current);sound('cash')});
+  const applyGomoku=(state:GomokuState)=>{setGomoku(state);sound(state.status==='finished'?(state.winnerId&&state.players.find(player=>player.color===state.me)?.id===state.winnerId?'win':'lose'):'tap')};
+  const createGomoku=()=>void act(()=>request<GomokuState>('game:gomoku:create',{spaceId,wager:gomokuBet}),applyGomoku);
+  const openGomoku=(room:GomokuRoom)=>void act(()=>request<GomokuState>(room.isMine?'game:gomoku:join':room.status==='waiting'?'game:gomoku:join':'game:gomoku:watch',{spaceId,roomId:room.roomId}),applyGomoku);
+  const gomokuMove=(cell:number)=>void act(()=>request<GomokuState>('game:gomoku:move',{roomId:gomoku!.roomId,cell}),applyGomoku);
+  const gomokuResign=()=>void act(()=>request<GomokuState>('game:gomoku:resign',{roomId:gomoku!.roomId}),applyGomoku);
+  const gomokuRematch=()=>void act(()=>request<GomokuState>('game:gomoku:rematch',{roomId:gomoku!.roomId}),applyGomoku);
+  const gomokuLeave=()=>void act(()=>request('game:gomoku:leave',{roomId:gomoku!.roomId}),()=>{setGomoku(undefined);sound('tap')});
+  const inviteGomoku=async(member:GameInviteMember)=>{
+    if(!gomoku||gomokuInviteBusy)return;setGomokuInviteBusy(member.id);
+    try{await request('game:gomoku:invite',{spaceId,roomId:gomoku.roomId,targetUserId:member.id});setGomokuInvited(current=>current.includes(member.id)?current:[...current,member.id]);}
+    catch(error){onError(error)}finally{setGomokuInviteBusy('')}
+  };
 
   if(loading)return <section className="game-center game-loading"><div className="game-loader"><i/><i/><i/></div><b>正在进入 POIO 游戏中心</b></section>;
   if(!overview)return <section className="game-center game-loading"><b>游戏中心暂时不可用</b><button onClick={onClose}>返回</button></section>;
@@ -131,8 +161,10 @@ export default function GameCenter({spaceId,spaceName,onClose,onError}:{spaceId:
     {active==='mines'&&<MinesGame state={overview.mines} wager={minesBet} setWager={setMinesBet} mineCount={mineCount} setMineCount={setMineCount} busy={busy} onStart={startMinesGame} onReveal={revealCell} onCashout={cashMines}/>} 
     {active==='crash'&&<CrashGame state={overview.crash!} trace={crashTrace} wager={crashBet} setWager={setCrashBet} busy={busy} onBet={placeCrash} onCashout={cashCrash}/>} 
     {active==='slots'&&<SlotsGame spin={slotSpin} wallet={wallet!} wager={slotBet} setWager={setSlotBet} spinning={spinning} busy={busy} onSpin={spin}/>} 
+    {active==='gomoku'&&<GomokuGame state={gomoku} rooms={overview.gomokuRooms??[]} wager={gomokuBet} setWager={setGomokuBet} busy={busy} onCreate={createGomoku} onOpen={openGomoku} onMove={gomokuMove} onResign={gomokuResign} onRematch={gomokuRematch} onLeave={gomokuLeave} onInvite={()=>setGomokuInviteOpen(true)}/>}
 
     {historyOpen&&<HistoryDrawer ledger={overview.ledger} rounds={overview.history} onClose={()=>setHistoryOpen(false)}/>} 
+    {gomokuInviteOpen&&gomoku&&<GomokuInvitePicker members={onlineMembers.filter(member=>!gomoku.players.some(player=>player.id===member.id))} invited={gomokuInvited} busy={gomokuInviteBusy} wager={gomoku.wager} onInvite={member=>void inviteGomoku(member)} onClose={()=>setGomokuInviteOpen(false)}/>}
   </section>;
 }
 
@@ -140,8 +172,8 @@ function GameLobby({wallet,onClaim,busy,onOpen}:{wallet:Wallet;onClaim:()=>void;
   const dailyReady=!wallet.lastDaily||Date.now()>=wallet.nextDailyAt;
   return <div className="game-lobby">
     <div className="game-hero" style={{backgroundImage:`linear-gradient(90deg,rgba(8,10,18,.08),rgba(8,10,18,.1)),url(${gameHero})`}}>
-      <div className="hero-copy"><span>POIO ORIGINAL GAMES</span><h1>和频道里的朋友<br/>一起玩点刺激的</h1><p>四款完整小游戏，共享语音、不打断聊天。所有结果由服务端判定，并提供公平种子验证。</p>
-        <button onClick={()=>onOpen('crash')}><Play size={18} fill="currentColor"/>进入本轮 Crash</button></div>
+      <div className="hero-copy"><span>POIO ORIGINAL GAMES</span><h1>和频道里的朋友<br/>一起玩点刺激的</h1><p>五款完整小游戏，共享语音、不打断聊天。既可以独自挑战，也可以实时联机对弈。</p>
+        <button onClick={()=>onOpen('gomoku')}><Swords size={18}/>发起五子棋对局</button></div>
       <div className="daily-card"><Gift size={23}/><span><b>{dailyReady?'每日积分已准备':'今日奖励已领取'}</b><small>{dailyReady?`领取 ${formatPoints(wallet.dailyReward)} 娱乐积分`:`下次 ${formatTime(wallet.nextDailyAt)} 可领取`}</small></span><button disabled={!dailyReady||busy} onClick={onClaim}>{dailyReady?'领取':'已领取'}{!dailyReady&&<Check size={15}/>}</button></div>
     </div>
     <div className="game-section-title"><div><span>GAME LIBRARY</span><h2>选择一款游戏</h2></div><small><ShieldCheck size={15}/>服务端判定 · 可验证随机</small></div>
@@ -200,6 +232,47 @@ function CrashGame({state,trace,wager,setWager,busy,onBet,onCashout}:{state:Cras
     </div>
     <div className="game-control-panel"><FairBadge proof={state.proof}/><BetControls value={wager} setValue={setWager} disabled={state.phase!=='betting'||!!state.myBet}/>{state.phase==='betting'?<button className="primary-game-action" disabled={busy||!!state.myBet} onClick={onBet}><Rocket/>{state.myBet?'已下注':'加入本轮'}</button>:state.phase==='running'&&state.myBet?.status==='playing'?<button className="primary-game-action cash" disabled={busy} onClick={onCashout}><Coins/>结算 {formatPoints(state.myBet.wager*state.multiplier)}</button>:<button className="primary-game-action" disabled>{state.phase==='crashed'?'等待下一轮':'观看本轮'}</button>}</div>
   </GameStage>;
+}
+
+function GomokuGame({state,rooms,wager,setWager,busy,onCreate,onOpen,onMove,onResign,onRematch,onLeave,onInvite}:{state?:GomokuState;rooms:GomokuRoom[];wager:number;setWager:(value:number)=>void;busy:boolean;onCreate:()=>void;onOpen:(room:GomokuRoom)=>void;onMove:(cell:number)=>void;onResign:()=>void;onRematch:()=>void;onLeave:()=>void;onInvite:()=>void}){
+  if(!state)return <GameStage title="联机五子棋" eyebrow="GOMOKU DUEL" description="创建棋桌或加入社区成员的房间；落子与胜负均由服务端实时判定。" icon={<CircleDot/>} accent="#c9a66b" art={gomokuCover}>
+    <div className="gomoku-room-browser">
+      <div className="gomoku-browser-head"><span><Swords/><b>社区棋桌</b><small>{rooms.filter(room=>room.status!=='finished').length} 桌可加入</small></span><i>LIVE</i></div>
+      <div className="gomoku-room-list">{rooms.length===0?<div className="gomoku-empty"><CircleDot/><b>还没有人摆下棋盘</b><span>创建第一张棋桌，频道里的朋友会立刻看到。</span></div>:rooms.map(room=><button key={room.roomId} onClick={()=>onOpen(room)} disabled={busy}>
+        <div className="gomoku-room-stones"><i className="black"/><i className="white"/></div>
+        <span><b>{room.players.map(player=>player.username).join('  vs  ')||'等待玩家'}</b><small>每人 {formatPoints(room.wager)} 积分 · 第 {room.roundNumber} 局 · {room.status==='waiting'?'等待对手':room.status==='playing'?`${room.moveCount} 手`:'已结束'}</small></span>
+        {room.isMine&&<em>我的棋桌</em>}<strong>{room.isMine?'返回':room.status==='waiting'?'加入':'观战'}<Play size={12}/></strong>
+      </button>)}</div>
+    </div>
+    <div className="game-control-panel gomoku-lobby-controls"><div className="gomoku-rule-mark"><CircleDot/><span><b>标准 15 路棋盘</b><small>黑棋先行，横、竖或斜线连续五子获胜。</small></span></div><BetControls value={wager} setValue={setWager} disabled={busy}/><div className="gomoku-pot-preview"><Coins/><span><small>双方奖池</small><b>{formatPoints(wager*2)} 积分</b></span></div><div className="gomoku-feature-list"><span><Check/>双方各押同额积分</span><span><Check/>胜者获得完整奖池</span><span><Check/>和棋自动原额退回</span><span><Check/>再战自动交换先手</span></div><button className="primary-game-action" disabled={busy} onClick={onCreate}><Swords/>押 {formatPoints(wager)} 积分创建</button></div>
+  </GameStage>;
+
+  const me=state.players.find(player=>player.color===state.me);const turn=state.players.find(player=>player.color===state.currentColor);const winner=state.players.find(player=>player.id===state.winnerId);
+  const winning=new Set(state.winningLine);const myRematch=!!me&&state.rematchVotes.includes(me.id);const opponentVote=state.rematchVotes.some(id=>id!==me?.id);
+  const headline=state.status==='waiting'?'等待另一位玩家加入':state.status==='playing'?(state.me==='spectator'?`正在观战 · ${turn?.username??'玩家'}落子`:state.canMove?'轮到你落子':`等待 ${turn?.username??'对手'} 落子`):state.result==='draw'?'本局和棋':`${winner?.username??'玩家'} 获胜`;
+  return <GameStage title="联机五子棋" eyebrow={`ROUND ${state.roundNumber}`} description={headline} icon={<CircleDot/>} accent="#c9a66b" art={gomokuCover}>
+    <div className="gomoku-board-shell">
+      <div className="gomoku-board" role="grid" aria-label="十五路五子棋棋盘">
+        {Array.from({length:225},(_,cell)=>{const stone=state.board[cell];return <button key={cell} role="gridcell" aria-label={`${Math.floor(cell/15)+1} 行 ${cell%15+1} 列${stone?`，${stone==='black'?'黑棋':'白棋'}`:''}`} disabled={busy||!state.canMove||!!stone} className={`${stone?'occupied':''} ${winning.has(cell)?'winning':''} ${state.lastMove===cell?'last':''}`} onClick={()=>onMove(cell)}>{stone&&<i className={stone}/>}</button>})}
+      </div>
+      {state.status==='finished'&&<div className="gomoku-result"><Sparkles/><b>{headline}</b><span>{state.result==='draw'?'棋盘已满，双方积分已退回':`${state.result==='resign'?'对手认输':'五子连珠'} · 赢得 ${formatPoints(state.pot)} 积分`}</span></div>}
+    </div>
+    <div className="game-control-panel gomoku-controls">
+      <div className={`gomoku-turn ${state.status}`}><i className={state.currentColor}/><span><small>{state.status==='playing'?'CURRENT TURN':'MATCH STATUS'}</small><b>{headline}</b></span></div>
+      <div className="gomoku-players">{(['black','white'] as const).map(color=>{const player=state.players.find(item=>item.color===color);return <div key={color} className={`${state.currentColor===color&&state.status==='playing'?'active':''} ${state.winnerId===player?.id?'winner':''}`}><i className={color}/><span><b>{player?.username??'等待加入'}</b><small>{color==='black'?'黑棋 · 先手':'白棋 · 后手'}{player?.id===me?.id?' · 你':''}</small></span>{state.rematchVotes.includes(player?.id??'')&&<Check/>}</div>})}</div>
+      <div className="gomoku-match-info"><span>房间码 <b>{state.roomId.toUpperCase()}</b></span><span>奖池 <b>{formatPoints(state.pot)}</b></span><span>手数 <b>{state.board.filter(Boolean).length}</b></span></div>
+      {state.status==='waiting'&&<div className="gomoku-waiting"><i/><span>房间已广播到当前社区</span></div>}
+      {state.status==='waiting'&&me&&<button className="primary-game-action gomoku-invite-button" disabled={busy} onClick={onInvite}><UserPlus/>邀请在线成员</button>}
+      {state.status==='finished'&&me&&<button className="primary-game-action" disabled={busy||myRematch} onClick={onRematch}><Swords/>{myRematch?(opponentVote?'正在开始…':'等待对手同意'):'再来一局'}</button>}
+      {state.status==='playing'&&me&&<button className="gomoku-danger" disabled={busy} onClick={onResign}>认输</button>}
+      <button className="gomoku-leave" disabled={busy} onClick={onLeave}><LogOut/>{state.status==='waiting'&&me?'解散棋桌':'离开棋桌'}</button>
+      {state.me==='spectator'&&<div className="gomoku-spectating"><Eye/>观战模式</div>}
+    </div>
+  </GameStage>;
+}
+
+function GomokuInvitePicker({members,invited,busy,wager,onInvite,onClose}:{members:GameInviteMember[];invited:string[];busy:string;wager:number;onInvite:(member:GameInviteMember)=>void;onClose:()=>void}){
+  return <div className="gomoku-invite-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)onClose()}}><section className="gomoku-invite-picker"><header><div><UserPlus/><span><b>邀请在线成员</b><small>对方加入时将支付 {formatPoints(wager)} 积分</small></span></div><button onClick={onClose}><X/></button></header><div className="gomoku-invite-members">{members.length===0?<div className="gomoku-invite-empty"><UserPlus/><b>暂时没有可邀请的在线成员</b><span>成员上线后会自动出现在这里。</span></div>:members.map(member=><article key={member.id}><div className="gomoku-invite-avatar">{member.avatarUrl?<img src={member.avatarUrl} alt=""/>:member.username.slice(0,1).toUpperCase()}</div><span><b>{member.username}</b><small><i/>在线</small></span><button disabled={!!busy||invited.includes(member.id)} onClick={()=>onInvite(member)}>{busy===member.id?'发送中…':invited.includes(member.id)?<><Check/>已邀请</>:<><UserPlus/>邀请</>}</button></article>)}</div></section></div>;
 }
 
 function SlotsGame({spin,wallet,wager,setWager,spinning,busy,onSpin}:{spin?:SlotSpin;wallet:Wallet;wager:number;setWager:(v:number)=>void;spinning:boolean;busy:boolean;onSpin:(free?:boolean)=>void}){
