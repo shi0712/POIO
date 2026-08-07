@@ -1,0 +1,81 @@
+name: Publish macOS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Successful macOS build workflow run ID
+        required: true
+        type: string
+      version:
+        description: POIO version without the v prefix
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout release metadata
+        uses: actions/checkout@v6
+
+      - name: Download verified macOS build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name POIO-mac-arm64-unsigned \
+            --dir artifact
+          test -n "$(find artifact -type f -name '*.dmg' -print -quit)"
+          test -n "$(find artifact -type f -name '*.zip' -print -quit)"
+          test -n "$(find artifact -type f -name 'latest-mac.yml' -print -quit)"
+
+      - name: Upload versioned assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          dmg="$(find artifact -type f -name '*.dmg' -print -quit)"
+          zip="$(find artifact -type f -name '*.zip' -print -quit)"
+          manifest="$(find artifact -type f -name 'latest-mac.yml' -print -quit)"
+          gh release upload "v$VERSION" "$dmg" "$zip" "$manifest" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Publish stable macOS update files to ModelScope
+        env:
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$MODELSCOPE_TOKEN"
+          dmg="$(find artifact -type f -name '*.dmg' -print -quit)"
+          zip="$(find artifact -type f -name '*.zip' -print -quit)"
+          manifest="$(find artifact -type f -name 'latest-mac.yml' -print -quit)"
+          git lfs install
+          git clone "https://oauth2:${MODELSCOPE_TOKEN}@www.modelscope.cn/sjw712/POIO.git" modelscope
+          cp "$dmg" modelscope/POIO-Mac-latest-arm64.dmg
+          cp "$zip" modelscope/POIO-Mac-latest-arm64.zip
+          python3 - "$manifest" modelscope/latest-mac.yml "$(basename "$dmg")" "$(basename "$zip")" <<'PY'
+          import pathlib
+          import sys
+
+          source, target, dmg_name, zip_name = sys.argv[1:]
+          text = pathlib.Path(source).read_text(encoding="utf-8")
+          text = text.replace(dmg_name, "POIO-Mac-latest-arm64.dmg")
+          text = text.replace(zip_name, "POIO-Mac-latest-arm64.zip")
+          pathlib.Path(target).write_text(text, encoding="utf-8")
+          PY
+          git -C modelscope config user.name "POIO Release Bot"
+          git -C modelscope config user.email "actions@users.noreply.github.com"
+          git -C modelscope add -- POIO-Mac-latest-arm64.dmg POIO-Mac-latest-arm64.zip latest-mac.yml
+          git -C modelscope commit -m "release: publish POIO ${{ inputs.version }} macOS"
+          git -C modelscope push
