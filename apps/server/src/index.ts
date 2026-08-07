@@ -14,9 +14,11 @@ import { crashState, gameEvents, gameWallet, gomokuRooms, gomokuState } from './
 import { clearGomokuInviteCooldown } from './game-plugins/gomoku.js';
 import { registerGamePlugins } from './game-plugins/registry.js';
 import { claimMumbleUsername, ensureVoiceChannel, kickMumbleUser, mumbleChannelName, removeVoiceChannel, setMumbleUserMuted } from './mumble-control.js';
+import { adjustGameWallet, gameAdminAudit, isGameAdmin, listGameWallets } from './admin.js';
 
 const app = express();
 app.use(cors({ origin: config.corsOrigin }));
+app.use(express.json({limit:'64kb'}));
 mkdirSync(config.uploadPath,{recursive:true});
 function normalizeUploadFilename(raw:string) {
   let name=raw;
@@ -28,6 +30,14 @@ function normalizeUploadFilename(raw:string) {
 }
 const upload=multer({storage:multer.diskStorage({destination:config.uploadPath,filename:(_req,file,done)=>{file.originalname=normalizeUploadFilename(file.originalname);done(null,`${nanoid()}${path.extname(file.originalname).slice(0,12)}`)}}),limits:{fileSize:50*1024*1024,files:1}});
 app.use('/uploads',express.static(config.uploadPath,{immutable:true,maxAge:'7d',fallthrough:false}));
+const adminPath=path.resolve('apps/server/public/admin');
+app.get('/admin',(_req,res)=>res.redirect(308,'./admin/'));
+app.use('/admin',(_req,res,next)=>{
+  res.setHeader('Cache-Control','no-store');
+  res.setHeader('X-Frame-Options','DENY');
+  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'");
+  next();
+},express.static(adminPath,{index:'index.html',fallthrough:false}));
 app.get('/invite/:code',(_req,res)=>res.sendFile(path.resolve(config.downloadPath,'invite.html'),{headers:{'Cache-Control':'no-store'}}));
 app.get('/api/invites/:code',(req,res)=>{
   try{
@@ -47,7 +57,48 @@ app.post('/api/uploads',upload.single('file'),(req,res)=>{
   if(!req.file){res.status(400).json({error:'没有收到文件'});return;}
   res.json({url:`/uploads/${req.file.filename}`,name:req.file.originalname,size:req.file.size,mime:req.file.mimetype||'application/octet-stream'});
 });
-app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '1.3.0' }));
+const adminUserFromRequest=(req:express.Request)=>{
+  const token=req.headers.authorization?.replace(/^Bearer\s+/i,'');
+  const user=token&&userFromToken(token);
+  if(!user)throw new Error('登录已过期');
+  if(!isGameAdmin(user,config.adminUsernames))throw new Error('没有积分管理权限');
+  return user;
+};
+const adminFailure=(res:express.Response,error:unknown,status=400)=>res.status(status).json({error:error instanceof Error?error.message:'请求失败'});
+app.post('/api/admin/login',async(req,res)=>{
+  try{
+    const value=z.object({username:z.string().trim().min(2).max(20),password:z.string().min(1).max(128)}).parse(req.body);
+    const result=await login(value.username,value.password);
+    if(!isGameAdmin(result.user,config.adminUsernames)){revokeSession(result.token);adminFailure(res,new Error('这个账号没有积分管理权限'),403);return;}
+    res.json({token:result.token,user:result.user});
+  }catch(error){adminFailure(res,error,401);}
+});
+app.get('/api/admin/me',(req,res)=>{try{res.json({user:adminUserFromRequest(req)});}catch(error){adminFailure(res,error,401);}});
+app.post('/api/admin/logout',(req,res)=>{
+  try{
+    adminUserFromRequest(req);const token=req.headers.authorization?.replace(/^Bearer\s+/i,'');
+    if(token)revokeSession(token);res.json({ok:true});
+  }catch(error){adminFailure(res,error,401);}
+});
+app.get('/api/admin/game-wallets',(req,res)=>{
+  try{
+    const value=z.object({query:z.string().max(40).default(''),limit:z.coerce.number().int().min(1).max(100).default(50),offset:z.coerce.number().int().min(0).default(0)}).parse(req.query);
+    adminUserFromRequest(req);res.json(listGameWallets(value.query,value.limit,value.offset));
+  }catch(error){adminFailure(res,error,error instanceof Error&&/登录|权限/.test(error.message)?401:400);}
+});
+app.post('/api/admin/game-wallets/:userId',(req,res)=>{
+  try{
+    const value=z.object({action:z.enum(['add','set']),value:z.number().int(),reason:z.string().trim().min(2).max(200)}).parse(req.body);
+    const admin=adminUserFromRequest(req);res.json(adjustGameWallet(admin,String(req.params.userId),value.action,value.value,value.reason));
+  }catch(error){adminFailure(res,error,error instanceof Error&&/登录|权限/.test(error.message)?401:400);}
+});
+app.get('/api/admin/game-audit',(req,res)=>{
+  try{
+    const value=z.object({limit:z.coerce.number().int().min(1).max(200).default(50)}).parse(req.query);
+    adminUserFromRequest(req);res.json({entries:gameAdminAudit(value.limit)});
+  }catch(error){adminFailure(res,error,error instanceof Error&&/登录|权限/.test(error.message)?401:400);}
+});
+app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '1.3.1' }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: config.corsOrigin }, maxHttpBufferSize: 2_000_000, transports: ['websocket','polling'] });
 
@@ -179,7 +230,7 @@ const forceUserOutOfSpace = async(spaceId:string,userId:string,reason:string) =>
 io.on('connection', (socket) => {
   socket.on('app:capabilities', (_raw, ack: Ack) => { ok(ack,{
     protocolVersion:1,
-    serverVersion:'1.3.0',
+    serverVersion:'1.3.1',
     features:{chat:true,directMessages:true,attachments:true,chatReplies:true,chatEditing:true,chatReactions:true,chatSearch:true,chatMentions:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,voiceLeaveCues:true,customJoinSounds:true,customLeaveSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true,gameCenter:true,gamePluginRegistry:true,blackjack:true,mines:true,slots:true,wheel:true,crash:true,gomoku:true},
     media:{codecs:['video/H264','video/VP8','audio/opus'],webRtcPort:config.mediaPort},
     android:{minimumVersion:1,recommendedVersion:1}

@@ -40,6 +40,7 @@ export const config = {
   mediaMinPort: number('MEDIASOUP_MIN_PORT', 41000),
   mediaMaxPort: number('MEDIASOUP_MAX_PORT', 41999),
   p2pIceServers,
+  adminUsernames: list('ADMIN_USERNAMES','sjw').map(value=>value.toLocaleLowerCase('en-US')),
   sessionDays: number('SESSION_DAYS', 30),
   corsOrigin: process.env.CORS_ORIGIN ?? '*'
 };

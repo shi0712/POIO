@@ -51,6 +51,7 @@ services:
       DOWNLOAD_PATH: /app/download
       RELEASE_PATH: /app/releases
       SESSION_DAYS: 30
+      ADMIN_USERNAMES: ${ADMIN_USERNAMES:-sjw}
       CORS_ORIGIN: "*"
     volumes:
       - ./data:/app/data

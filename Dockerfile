@@ -16,6 +16,7 @@ WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/server/package.json ./apps/server/package.json
 COPY --from=build /app/apps/server/dist ./apps/server/dist
+COPY --from=build /app/apps/server/public ./apps/server/public
 COPY --from=build /opt/echodeck/mediasoup-worker /opt/echodeck/mediasoup-worker
 RUN mkdir -p /app/data && chown -R node:node /app
 USER node
