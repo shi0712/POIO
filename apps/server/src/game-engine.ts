@@ -138,9 +138,15 @@ export function spinSlots(random:FairRandom,wager:number){
 
 export function crashPoint(secret:FairSecret){
   const hash=createHmac('sha256',secret.serverSeed).update(`${secret.clientSeed}:${secret.nonce}:crash`).digest('hex');
-  const value=Number.parseInt(hash.slice(0,13),16)/0x1_0000_0000_0000;
-  if(value<0.03)return 1;
-  return Math.min(100,Math.max(1.01,Math.floor((0.97/(1-value))*100)/100));
+  const value=Number.parseInt(hash.slice(0,13),16)/0x10_0000_0000_0000;
+  // A single verifiable roll drives the whole round. Two percent of rounds
+  // are instant crashes; the remaining roll is normalized before applying
+  // the inverse survival curve. This keeps the survival probability at
+  // roughly 98% / target multiplier without accidentally counting the
+  // lowest part of the random range twice.
+  if(value<0.02)return 1.01;
+  const tail=(value-0.02)/0.98;
+  return Math.min(100,Math.max(1.02,Math.floor((1/(1-tail))*100)/100));
 }
 
 export function crashMultiplier(elapsedMs:number){

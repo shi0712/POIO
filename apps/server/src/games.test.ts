@@ -21,6 +21,17 @@ test('fair engine is deterministic and game math stays in valid ranges',()=>{
   assert.ok(engine.minesMultiplier(5,3)>1);
   assert.ok(engine.crashPoint(secret)>=1);
   assert.ok(engine.crashMultiplier(8_500)>=2.7);
+
+  let instantCrashes=0;
+  const crashPoints:number[]=[];
+  for(let nonce=0;nonce<10_000;nonce++){
+    const point=engine.crashPoint({serverSeed:`distribution-${nonce}`,serverSeedHash:'',clientSeed:'poio-test',nonce});
+    crashPoints.push(point);
+    if(point===1.01)instantCrashes++;
+  }
+  assert.ok(instantCrashes>=150&&instantCrashes<=250,`instant crash rate drifted: ${instantCrashes}/10000`);
+  assert.ok(crashPoints.filter(point=>point>=2).length>=4_700);
+  assert.ok(crashPoints.filter(point=>point>=2).length<=5_100);
 });
 
 test('wallet ledger and all turn-based games are server authoritative',async()=>{

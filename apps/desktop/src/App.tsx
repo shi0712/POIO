@@ -93,12 +93,12 @@ export default function App(){
   },[user?.id,voiceChannel,voiceJoinCuesEnabled]);
   useEffect(()=>{
     const left=(event:{channelId:string;user:User})=>{
-      if(!voiceJoinCuesEnabled||event.channelId!==voiceChannel)return;
+      if(!voiceJoinCuesEnabled||event.channelId!==voiceChannel||event.user.id===user?.id)return;
       void playVoiceLeaveCue(event.user.leaveSoundUrl?`${serverUrl}${event.user.leaveSoundUrl}`:undefined);
     };
     socket.on('voice:memberLeft',left);
     return()=>{socket.off('voice:memberLeft',left)};
-  },[voiceChannel,voiceJoinCuesEnabled]);
+  },[user?.id,voiceChannel,voiceJoinCuesEnabled]);
   useEffect(()=>{
     const previous=previousAudioControls.current;
     if(voiceChannel){

@@ -12,7 +12,7 @@
   <a href="https://www.modelscope.cn/models/sjw712/POIO/files">ModelScope 镜像</a>
 </p>
 
-> 当前版本：**POIO 1.1.0**，提供 Windows x64、macOS Apple Silicon、Android arm64 与网页版。桌面在线更新和官网下载使用 ModelScope；安装包尚未进行代码签名，首次运行时可能显示系统安全提示。
+> 当前版本：**POIO 1.1.1**，提供 Windows x64、macOS Apple Silicon、Android arm64 与网页版。桌面在线更新和官网下载使用 ModelScope；安装包尚未进行代码签名，首次运行时可能显示系统安全提示。
 
 ## 已实现功能
 
