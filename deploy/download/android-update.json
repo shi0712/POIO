@@ -1,8 +1,8 @@
 {
-  "versionCode": 29,
-  "versionName": "1.0.1",
+  "versionCode": 30,
+  "versionName": "1.0.2",
   "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
   "sha256": "4727CEDE493A4A0A07F87A837D46ADF23BC1CAE37829FB926A955F844A4367E8",
   "size": 44373103,
-  "notes": "POIO Android 1.0.1：新增自定义退出音效。可在语音设置中上传、试听、更换或恢复默认；自己及其他成员退出频道时会播放对应账号的退出音效，加载失败自动回退默认音效。"
+  "notes": "POIO Android 1.0.2：新增社区成员一对一私聊，支持实时消息、历史记录、未读提示、Markdown、图片、文件和复制消息；只有仍有共同社区的双方可以访问。"
 }
