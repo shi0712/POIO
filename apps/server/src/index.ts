@@ -31,7 +31,6 @@ function normalizeUploadFilename(raw:string) {
 const upload=multer({storage:multer.diskStorage({destination:config.uploadPath,filename:(_req,file,done)=>{file.originalname=normalizeUploadFilename(file.originalname);done(null,`${nanoid()}${path.extname(file.originalname).slice(0,12)}`)}}),limits:{fileSize:50*1024*1024,files:1}});
 app.use('/uploads',express.static(config.uploadPath,{immutable:true,maxAge:'7d',fallthrough:false}));
 const adminPath=path.resolve('apps/server/public/admin');
-app.get('/admin',(_req,res)=>res.redirect(308,'./admin/'));
 app.use('/admin',(_req,res,next)=>{
   res.setHeader('Cache-Control','no-store');
   res.setHeader('X-Frame-Options','DENY');
