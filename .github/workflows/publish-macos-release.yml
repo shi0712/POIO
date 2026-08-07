@@ -51,6 +51,21 @@ jobs:
           gh release upload "v$VERSION" "$dmg" "$zip" "$manifest" \
             --repo "$GITHUB_REPOSITORY" --clobber
 
+      - name: Add macOS checksums to release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          dmg="$(find artifact -type f -name '*.dmg' -print -quit)"
+          zip="$(find artifact -type f -name '*.zip' -print -quit)"
+          body="$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+          checksums=$(printf '%s\n%s' \
+            "- macOS DMG: \`$(sha256sum "$dmg" | cut -d' ' -f1)\`" \
+            "- macOS ZIP: \`$(sha256sum "$zip" | cut -d' ' -f1)\`")
+          gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --notes "$body"$'\n'"$checksums"
+
       - name: Publish stable macOS update files to ModelScope
         env:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
