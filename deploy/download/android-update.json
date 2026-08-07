@@ -2,7 +2,7 @@
   "versionCode": 30,
   "versionName": "1.0.2",
   "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
-  "sha256": "4727CEDE493A4A0A07F87A837D46ADF23BC1CAE37829FB926A955F844A4367E8",
-  "size": 44373103,
+  "sha256": "5B0651AF50A8138794DC8DD6DBAFFCF08ACF279919EFE975E63D29658CA53E6B",
+  "size": 44422251,
   "notes": "POIO Android 1.0.2：新增社区成员一对一私聊，支持实时消息、历史记录、未读提示、Markdown、图片、文件和复制消息；只有仍有共同社区的双方可以访问。"
 }
