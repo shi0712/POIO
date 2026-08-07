@@ -11,6 +11,14 @@ process.env.UPLOAD_PATH=path.join(os.tmpdir(),`poio-games-uploads-${process.pid}
 const database=await import('./database.js');
 const games=await import('./games.js');
 const engine=await import('./game-engine.js');
+const plugins=await import('./game-plugins/registry.js');
+
+test('game plugins register independently with unique manifests',()=>{
+  const ids=plugins.gamePlugins.map(plugin=>plugin.manifest.id);
+  assert.equal(new Set(ids).size,ids.length);
+  assert.deepEqual(ids.filter(id=>id!=='core').sort(),['blackjack','crash','gomoku','mines','slots','wheel']);
+  assert.equal(plugins.gamePlugins.find(plugin=>plugin.manifest.id==='gomoku')?.manifest.supportsInvites,true);
+});
 
 test('fair engine is deterministic and game math stays in valid ranges',()=>{
   const secret={serverSeed:'0123456789abcdef'.repeat(4),serverSeedHash:'hash',clientSeed:'client',nonce:3};
@@ -67,8 +75,28 @@ test('wallet ledger and all turn-based games are server authoritative',async()=>
   assert.equal(slots.grid.length,5);
   assert.equal(slots.grid.every(reel=>reel.length===3),true);
   assert.ok(slots.payout>=0);
+  const wheel=games.spinWheel(userId,100).spin;
+  assert.ok(wheel.segmentIndex>=0&&wheel.segmentIndex<10);
+  assert.ok(wheel.multiplier>=0&&wheel.multiplier<=10);
+  assert.ok(wheel.payout>=0);
+  assert.ok(wheel.proof.serverSeed);
+  assert.equal(games.wheelState(userId)?.id,wheel.id);
   assert.equal(games.gameHistory(userId,20).some((round:any)=>round.game==='slots'),true);
+  assert.equal(games.gameHistory(userId,20).some((round:any)=>round.game==='wheel'),true);
   assert.ok(games.gameLedger(userId,50).length>=5);
+});
+
+test('dissolving a waiting gomoku room removes it and permits a fresh room',async()=>{
+  const host=(await database.register(`gomoku_cleanup_${Date.now()}`,'Gomoku-test-password')).user;
+  const spaceId='gomoku-cleanup-space';
+  const first=games.createGomokuRoom(spaceId,host.id,100);
+  assert.equal(games.gomokuRooms(spaceId,host.id).some((room:any)=>room.roomId===first.roomId),true);
+  games.leaveGomokuRoom(first.roomId,host.id);
+  assert.equal(games.gomokuRooms(spaceId,host.id).some((room:any)=>room.roomId===first.roomId),false);
+  assert.equal(games.gomokuActiveRoomId(host.id),undefined);
+  const second=games.createGomokuRoom(spaceId,host.id,100);
+  assert.notEqual(second.roomId,first.roomId);
+  games.leaveGomokuRoom(second.roomId,host.id);
 });
 
 test('gomoku rooms synchronize players, reject invalid turns and detect five in a row',async()=>{

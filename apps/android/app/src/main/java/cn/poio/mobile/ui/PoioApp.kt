@@ -150,6 +150,7 @@ import cn.poio.mobile.model.Channel
 import cn.poio.mobile.model.ChannelKind
 import cn.poio.mobile.model.ChatMessage
 import cn.poio.mobile.model.DirectMessage
+import cn.poio.mobile.model.parseDirectGomokuInvitation
 import cn.poio.mobile.model.Space
 import cn.poio.mobile.model.User
 import cn.poio.mobile.voice.VoiceState
@@ -390,6 +391,7 @@ private fun HomeScreen(
                 onBack = actions::closeDirectMessage,
                 onSend = actions::sendDirectMessage,
                 onAttach = actions::sendDirectAttachment,
+                onJoinGomoku = { spaceId, roomId -> gameOpen = true; actions.openGomokuInvitation(spaceId, roomId) },
                 modifier = Modifier.padding(padding),
             )
         } else if (!channelOpen) {
@@ -1219,6 +1221,7 @@ private fun DirectMessageScreen(
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onAttach: (android.net.Uri, String) -> Unit,
+    onJoinGomoku: (String, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var body by rememberSaveable(peer.id) { mutableStateOf("") }
@@ -1309,7 +1312,7 @@ private fun DirectMessageScreen(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 items(messages, key = DirectMessage::id) { message ->
-                    DirectMessageCard(message, own = message.senderId == currentUserId)
+                    DirectMessageCard(message, own = message.senderId == currentUserId, onJoinGomoku = onJoinGomoku)
                 }
             }
         }
@@ -1317,9 +1320,10 @@ private fun DirectMessageScreen(
 }
 
 @Composable
-private fun DirectMessageCard(message: DirectMessage, own: Boolean) {
+private fun DirectMessageCard(message: DirectMessage, own: Boolean, onJoinGomoku: (String, String) -> Unit) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
+    val invitation = parseDirectGomokuInvitation(message.body)
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(13.dp))
             .background(if (own) MaterialTheme.colorScheme.primary.copy(alpha = .06f) else Color.Transparent)
@@ -1338,7 +1342,7 @@ private fun DirectMessageCard(message: DirectMessage, own: Boolean) {
                 Spacer(Modifier.weight(1f))
                 IconButton(
                     onClick = {
-                        val text = message.body.takeIf(String::isNotBlank) ?: message.attachmentUrl ?: message.attachmentName.orEmpty()
+                        val text = if (invitation != null) "五子棋对局邀请" else message.body.takeIf(String::isNotBlank) ?: message.attachmentUrl ?: message.attachmentName.orEmpty()
                         context.getSystemService(ClipboardManager::class.java)
                             .setPrimaryClip(ClipData.newPlainText("POIO 私聊", text))
                         Toast.makeText(context, "消息已复制", Toast.LENGTH_SHORT).show()
@@ -1346,7 +1350,21 @@ private fun DirectMessageCard(message: DirectMessage, own: Boolean) {
                     modifier = Modifier.size(30.dp),
                 ) { Icon(Icons.Default.ContentCopy, "复制消息", Modifier.size(17.dp)) }
             }
-            if (message.body.isNotBlank()) MarkdownMessage(message.body, Modifier.padding(top = 3.dp))
+            if (invitation != null) {
+                val expired = invitation.expiresAt <= System.currentTimeMillis()
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 5.dp).clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFF242137)).border(1.dp, Color(0xFF795BFF).copy(alpha = .55f), RoundedCornerShape(14.dp))
+                        .clickable(enabled = !expired) { onJoinGomoku(invitation.spaceId, invitation.roomId) }.padding(13.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp),
+                ) {
+                    Icon(Icons.Default.SportsEsports, null, Modifier.size(34.dp), tint = Color(0xFF9A83FF))
+                    Column(Modifier.weight(1f)) {
+                        Text(if (expired) "五子棋邀请已过期" else if (own) "已发送五子棋邀请" else "点击加入五子棋", fontWeight = FontWeight.Black)
+                        Text("每人 ${invitation.wager} 积分 · 奖池 ${invitation.pot}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                    }
+                }
+            } else if (message.body.isNotBlank()) MarkdownMessage(message.body, Modifier.padding(top = 3.dp))
             val attachmentUrl = message.attachmentUrl?.let(::poioAssetUrl)
             if (attachmentUrl != null && message.attachmentMime?.startsWith("image/") == true) {
                 AsyncImage(

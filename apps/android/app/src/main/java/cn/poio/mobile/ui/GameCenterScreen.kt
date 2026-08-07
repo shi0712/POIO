@@ -1,6 +1,8 @@
 package cn.poio.mobile.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -49,12 +51,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -80,9 +84,13 @@ import cn.poio.mobile.model.GomokuRoom
 import cn.poio.mobile.model.MinesGame
 import cn.poio.mobile.model.SlotSpin
 import cn.poio.mobile.model.User
+import cn.poio.mobile.model.WheelSpin
+import cn.poio.mobile.ui.games.MobileGame
+import cn.poio.mobile.ui.games.MobileGameRegistry
 import java.text.NumberFormat
 import kotlin.math.ln
 import kotlin.math.max
+import kotlinx.coroutines.delay
 
 private val GameBackground = Color(0xFF0D0F18)
 private val GamePanel = Color(0xFF181A27)
@@ -90,7 +98,6 @@ private val GamePurple = Color(0xFF795BFF)
 private val GameMint = Color(0xFF49DFC7)
 private val GameLime = Color(0xFFD6FF5E)
 private val GamePink = Color(0xFFFF75BC)
-private enum class MobileGame { LOBBY, BLACKJACK, MINES, CRASH, SLOTS, GOMOKU }
 
 @Composable
 fun GameCenterScreen(
@@ -105,6 +112,10 @@ fun GameCenterScreen(
     var wager by remember { mutableLongStateOf(100) }
     var mineCount by remember { mutableIntStateOf(5) }
     var inviteOpen by remember { mutableStateOf(false) }
+    val invitedUntil = remember { mutableStateMapOf<String, Long>() }
+    var inviteClock by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    androidx.compose.runtime.LaunchedEffect(state.gomoku?.roomId) { invitedUntil.clear(); inviteOpen = false }
+    androidx.compose.runtime.LaunchedEffect(inviteOpen) { while (inviteOpen) { inviteClock = System.currentTimeMillis(); delay(500) } }
     Column(Modifier.fillMaxSize().background(GameBackground)) {
         GameTopBar(
             balance = state.wallet?.balance ?: 0,
@@ -125,6 +136,7 @@ fun GameCenterScreen(
             game == MobileGame.MINES -> MinesView(state.mines, wager, mineCount, busy, { wager = it }, { mineCount = it }, actions)
             game == MobileGame.CRASH -> CrashView(state.crash, wager, busy, { wager = it }, spaceId, actions)
             game == MobileGame.SLOTS -> SlotsView(state.slots, state.wallet.freeSpins, wager, busy, { wager = it }, actions)
+            game == MobileGame.WHEEL -> WheelView(state.wheel, wager, busy, { wager = it }, actions)
             else -> GomokuView(state.gomoku, state.gomokuRooms, spaceId, wager, busy, { wager = it }, actions) { inviteOpen = true }
         }
     }
@@ -134,9 +146,9 @@ fun GameCenterScreen(
         text = { LazyColumn(verticalArrangement = Arrangement.spacedBy(7.dp)) {
             val available = onlineMembers.filter { member -> state.gomoku.players.none { it.id == member.id } }
             if (available.isEmpty()) item { Text("暂时没有可邀请的在线成员", color = Color(0xFF8B8E9C)) }
-            items(available, key = User::id) { member -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = .04f)).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            items(available, key = User::id) { member -> val remaining=((invitedUntil[member.id]?:0L)-inviteClock).coerceAtLeast(0); Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = .04f)).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(member.username, Modifier.weight(1f), fontWeight = FontWeight.Bold)
-                Button(onClick = { actions.inviteGomoku(spaceId, state.gomoku.roomId, member.id) }) { Icon(Icons.Default.PersonAdd, null); Spacer(Modifier.width(5.dp)); Text("邀请") }
+                Button(enabled=remaining<=0,onClick = { actions.inviteGomoku(spaceId, state.gomoku.roomId, member.id); invitedUntil[member.id]=System.currentTimeMillis()+5_000 }) { Icon(Icons.Default.PersonAdd, null); Spacer(Modifier.width(5.dp)); Text(if(remaining>0)"已邀请 ${kotlin.math.ceil(remaining/1000.0).toInt()}s" else if(invitedUntil.containsKey(member.id))"重新邀请" else "邀请") }
             } }
         } },
         confirmButton = { TextButton(onClick = { inviteOpen = false }) { Text("完成") } },
@@ -166,14 +178,7 @@ private fun GameTopBar(balance: Long, game: MobileGame, onBack: () -> Unit, onCl
     }
 }
 
-private data class MobileGameCard(val game: MobileGame, val name: String, val detail: String, val art: Int, val color: Color)
-private val mobileGames = listOf(
-    MobileGameCard(MobileGame.BLACKJACK, "21 点", "要牌、停牌、加倍", R.drawable.poio_game_blackjack, Color(0xFF9D7CFF)),
-    MobileGameCard(MobileGame.MINES, "Mines", "翻开水晶，随时结算", R.drawable.poio_game_mines, GameMint),
-    MobileGameCard(MobileGame.CRASH, "Crash", "与社区共享同一轮曲线", R.drawable.poio_game_crash, GameLime),
-    MobileGameCard(MobileGame.SLOTS, "霓虹转轴", "10 条中奖线与免费旋转", R.drawable.poio_game_slots, GamePink),
-    MobileGameCard(MobileGame.GOMOKU, "联机五子棋", "创建棋桌，实时对弈与观战", R.drawable.poio_game_gomoku, Color(0xFFC9A66B)),
-)
+private val mobileGames get() = MobileGameRegistry.games
 
 @Composable
 private fun GameLobby(state: GameCenterState, busy: Boolean, actions: PoioActions, onGame: (MobileGame) -> Unit) {
@@ -517,6 +522,34 @@ private fun SlotsView(spin: SlotSpin?, freeSpins: Int, wager: Long, busy: Boolea
     }) {
         Row(Modifier.fillMaxWidth().height(276.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xFF201529)).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             grid.forEach { reel -> Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) { reel.take(3).forEach { symbol -> SlotSymbol(symbol, Modifier.weight(1f).fillMaxWidth()) } } }
+        }
+    }
+}
+
+private val wheelColors = listOf(0xFFFF5F78,0xFF6F57E8,0xFF2F8DD8,0xFF2AB99F,0xFF87BC45,0xFFE8AF3D,0xFFED7B39,0xFFE3529A,0xFF9B5DE5,0xFFFFD95A).map(::Color)
+
+@Composable
+private fun WheelView(spin: WheelSpin?, wager: Long, busy: Boolean, onWager: (Long) -> Unit, actions: PoioActions) {
+    var target by remember { mutableStateOf(0f) }
+    androidx.compose.runtime.LaunchedEffect(spin?.id) {
+        spin ?: return@LaunchedEffect
+        val center = spin.segmentIndex * 36f + 18f
+        target += 5 * 360f + ((360f - (center + target % 360f)) % 360f)
+    }
+    val rotation by animateFloatAsState(target, tween(2800), label = "wheel")
+    GameScaffold("幸运大转盘", R.drawable.poio_game_wheel, Color(0xFFFFD85A), controls = {
+        WagerControl(wager, !busy, onWager)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("最高 10×", color = Color(0xFFFFD85A)); Text(spin?.let { if (it.payout > 0) "${it.label} · +${points(it.payout)}" else it.label } ?: "等待转动", fontWeight = FontWeight.Black) }
+        Button({ actions.spinWheel(wager) }, Modifier.fillMaxWidth().height(50.dp), enabled = !busy, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFB33F), contentColor = Color(0xFF241D14))) { Icon(Icons.Default.Casino, null); Spacer(Modifier.width(7.dp)); Text(if (busy) "转动中…" else "转动 · ${points(wager)}") }
+    }) {
+        Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(22.dp)).background(Color(0xFF121321)), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxSize(.82f).graphicsLayer { rotationZ = rotation }) {
+                wheelColors.forEachIndexed { index, color -> drawArc(color, index * 36f - 90f, 36f, true, Offset.Zero, Size(size.width,size.height)) }
+                drawCircle(Color(0xFFFFF3C7), size.minDimension * .15f)
+                drawCircle(Color(0xFFFFD85A), size.minDimension * .15f, style = Stroke(size.minDimension * .025f))
+            }
+            Text("POIO", fontWeight = FontWeight.Black, color = Color(0xFF2A2341), fontSize = 20.sp)
+            Canvas(Modifier.align(Alignment.TopCenter).padding(top = 12.dp).size(44.dp)) { val path=Path().apply{moveTo(size.width/2,size.height);lineTo(0f,0f);lineTo(size.width,0f);close()};drawPath(path,Color.White) }
         }
     }
 }

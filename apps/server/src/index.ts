@@ -10,7 +10,9 @@ import { z } from 'zod';
 import { config } from './config.js';
 import { bootstrap, channelMessages, channelSpaceId, createChannel, createDirectMessage, createMessage, createSpace, createSpaceInvite, deleteChannel, deleteMessage, directConversations, directMessages, editMessage, joinSpace, login, markDirectMessagesRead, mentionedUserIds, previewSpaceInvite, register, removeSpaceMember, renameChannel, renameSpace, resume, revokeSession, scheduleDatabaseBackups, searchMessages, spaceMemberIds, spaceMembers, toggleMessageReaction, updateAvatar, updateJoinSound, updateLeaveSound, updateMemberModeration, userFromToken, voiceChannelForUser, type PublicUser } from './database.js';
 import * as media from './media.js';
-import { blackjackAction, blackjackState, cashoutCrash, cashoutMines, claimGameDaily, crashState, createGomokuRoom, gameEvents, gameHistory, gameOverview, gameWallet, gomokuActiveRoomId, gomokuRooms, gomokuState, joinGomokuRoom, leaveGomokuRoom, minesState, placeCrashBet, playGomokuMove, playSlots, rematchGomoku, resignGomoku, revealMineCell, slotState, startBlackjack, startMines, watchGomokuRoom } from './games.js';
+import { crashState, gameEvents, gameWallet, gomokuRooms, gomokuState } from './games.js';
+import { clearGomokuInviteCooldown } from './game-plugins/gomoku.js';
+import { registerGamePlugins } from './game-plugins/registry.js';
 import { claimMumbleUsername, ensureVoiceChannel, kickMumbleUser, mumbleChannelName, removeVoiceChannel, setMumbleUserMuted } from './mumble-control.js';
 
 const app = express();
@@ -45,7 +47,7 @@ app.post('/api/uploads',upload.single('file'),(req,res)=>{
   if(!req.file){res.status(400).json({error:'没有收到文件'});return;}
   res.json({url:`/uploads/${req.file.filename}`,name:req.file.originalname,size:req.file.size,mime:req.file.mimetype||'application/octet-stream'});
 });
-app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '1.2.0' }));
+app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '1.3.0' }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: config.corsOrigin }, maxHttpBufferSize: 2_000_000, transports: ['websocket','polling'] });
 
@@ -63,7 +65,6 @@ type VoicePresence = { channelId:string; user:PublicUser };
 const voicePresence = new Map<string,VoicePresence>();
 const recentVoiceDisconnects = new Map<string,{expiresAt:number;timer:NodeJS.Timeout}>();
 const onlineSessions = new Map<string,string>();
-const gomokuInviteCooldown = new Map<string,number>();
 const voiceUsers = (channelId:string) => [...new Map([...voicePresence.values()].filter(entry=>entry.channelId===channelId).map(entry=>[entry.user.id,entry.user])).values()];
 const voicePresenceKey = (channelId:string,userId:string) => `${channelId}:${userId}`;
 const broadcastVoicePresence = (channelId:string) => {
@@ -138,11 +139,16 @@ const emitCrashState = (spaceId:string) => {
     if(userId)connected.emit('game:crash',crashState(spaceId,userId));
   }
 };
-const emitGomokuState = (spaceId:string,roomId:string) => {
+const emitGomokuState = (spaceId:string,roomId:string,closed=false) => {
   const table=io.sockets.adapter.rooms.get(`gomoku:${roomId}`);
+  if(closed){
+    clearGomokuInviteCooldown(roomId);
+    io.to(`space:${spaceId}`).emit('game:gomoku:closed',{spaceId,roomId});
+  }
   if(table)for(const socketId of table){
     const connected=io.sockets.sockets.get(socketId);const userId=connected?.data.user?.id;
-    if(userId){try{connected.emit('game:gomoku:state',gomokuState(roomId,userId));}catch{} }
+    if(userId&&!closed){try{connected.emit('game:gomoku:state',gomokuState(roomId,userId));}catch{} }
+    if(closed)connected?.leave(`gomoku:${roomId}`);
   }
   const gameRoom=io.sockets.adapter.rooms.get(`game:${spaceId}`);
   if(gameRoom)for(const socketId of gameRoom){
@@ -152,7 +158,7 @@ const emitGomokuState = (spaceId:string,roomId:string) => {
 };
 gameEvents.on('wallet:update',({userId}:{userId:string})=>emitGameWallet(userId));
 gameEvents.on('crash:update',({spaceId}:{spaceId:string})=>emitCrashState(spaceId));
-gameEvents.on('gomoku:update',({spaceId,roomId}:{spaceId:string;roomId:string})=>emitGomokuState(spaceId,roomId));
+gameEvents.on('gomoku:update',({spaceId,roomId,closed=false}:{spaceId:string;roomId:string;closed?:boolean})=>emitGomokuState(spaceId,roomId,closed));
 const forceUserOutOfSpace = async(spaceId:string,userId:string,reason:string) => {
   const shouldKick=[...voicePresence.values()].some(entry=>entry.user.id===userId&&channelSpaceId(entry.channelId)===spaceId);
   if(shouldKick)await kickMumbleUser(userId,reason).catch(error=>console.error('Mumble member kick failed',error));
@@ -173,8 +179,8 @@ const forceUserOutOfSpace = async(spaceId:string,userId:string,reason:string) =>
 io.on('connection', (socket) => {
   socket.on('app:capabilities', (_raw, ack: Ack) => { ok(ack,{
     protocolVersion:1,
-    serverVersion:'1.2.0',
-    features:{chat:true,directMessages:true,attachments:true,chatReplies:true,chatEditing:true,chatReactions:true,chatSearch:true,chatMentions:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,voiceLeaveCues:true,customJoinSounds:true,customLeaveSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true,gameCenter:true,blackjack:true,mines:true,slots:true,crash:true,gomoku:true},
+    serverVersion:'1.3.0',
+    features:{chat:true,directMessages:true,attachments:true,chatReplies:true,chatEditing:true,chatReactions:true,chatSearch:true,chatMentions:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,voiceLeaveCues:true,customJoinSounds:true,customLeaveSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true,gameCenter:true,gamePluginRegistry:true,blackjack:true,mines:true,slots:true,wheel:true,crash:true,gomoku:true},
     media:{codecs:['video/H264','video/VP8','audio/opus'],webRtcPort:config.mediaPort},
     android:{minimumVersion:1,recommendedVersion:1}
   }); });
@@ -315,69 +321,9 @@ io.on('connection', (socket) => {
     for(const connected of socketsForUser(peerId))connected.emit('dm:read',{userId:user.id,...receipt});
     ok(ack,receipt);
   } catch(e){fail(ack,e);} });
-  socket.on('game:enter', (raw, ack: Ack) => { try {
-    const user=auth(socket);const {spaceId}=z.object({spaceId:z.string()}).parse(raw);spaceMembers(user.id,spaceId);
-    for(const room of socket.rooms)if(room.startsWith('game:'))socket.leave(room);
-    socket.join(`game:${spaceId}`);ok(ack,gameOverview(user.id,spaceId));
-  } catch(e){fail(ack,e);} });
-  socket.on('game:leave', (_raw, ack: Ack) => { try { auth(socket);for(const room of socket.rooms)if(room.startsWith('game:')||room.startsWith('gomoku:'))socket.leave(room);ok(ack,true); } catch(e){fail(ack,e);} });
-  socket.on('game:overview', (raw, ack: Ack) => { try {
-    const user=auth(socket);const {spaceId}=z.object({spaceId:z.string().optional()}).parse(raw);
-    if(spaceId)spaceMembers(user.id,spaceId);ok(ack,gameOverview(user.id,spaceId));
-  } catch(e){fail(ack,e);} });
-  socket.on('game:daily', (_raw, ack: Ack) => { try { ok(ack,claimGameDaily(auth(socket).id)); } catch(e){fail(ack,e);} });
-  socket.on('game:history', (raw, ack: Ack) => { try { const {limit}=z.object({limit:z.number().int().min(1).max(50).optional()}).parse(raw);ok(ack,gameHistory(auth(socket).id,limit)); } catch(e){fail(ack,e);} });
-  socket.on('game:blackjack:state', (_raw, ack: Ack) => { try { ok(ack,blackjackState(auth(socket).id)); } catch(e){fail(ack,e);} });
-  socket.on('game:blackjack:start', (raw, ack: Ack) => { try { const {wager}=z.object({wager:z.number().int()}).parse(raw);ok(ack,startBlackjack(auth(socket).id,wager)); } catch(e){fail(ack,e);} });
-  socket.on('game:blackjack:action', (raw, ack: Ack) => { try { const {action}=z.object({action:z.enum(['hit','stand','double'])}).parse(raw);ok(ack,blackjackAction(auth(socket).id,action)); } catch(e){fail(ack,e);} });
-  socket.on('game:mines:state', (_raw, ack: Ack) => { try { ok(ack,minesState(auth(socket).id)); } catch(e){fail(ack,e);} });
-  socket.on('game:mines:start', (raw, ack: Ack) => { try { const value=z.object({wager:z.number().int(),mineCount:z.number().int()}).parse(raw);ok(ack,startMines(auth(socket).id,value.wager,value.mineCount)); } catch(e){fail(ack,e);} });
-  socket.on('game:mines:reveal', (raw, ack: Ack) => { try { const {cell}=z.object({cell:z.number().int().min(0).max(24)}).parse(raw);ok(ack,revealMineCell(auth(socket).id,cell)); } catch(e){fail(ack,e);} });
-  socket.on('game:mines:cashout', (_raw, ack: Ack) => { try { ok(ack,cashoutMines(auth(socket).id)); } catch(e){fail(ack,e);} });
-  socket.on('game:slots:state', (_raw, ack: Ack) => { try { ok(ack,slotState(auth(socket).id)); } catch(e){fail(ack,e);} });
-  socket.on('game:slots:spin', (raw, ack: Ack) => { try { const value=z.object({wager:z.number().int(),useFreeSpin:z.boolean().optional()}).parse(raw);ok(ack,playSlots(auth(socket).id,value.wager,value.useFreeSpin)); } catch(e){fail(ack,e);} });
-  socket.on('game:crash:state', (raw, ack: Ack) => { try { const user=auth(socket);const {spaceId}=z.object({spaceId:z.string()}).parse(raw);spaceMembers(user.id,spaceId);ok(ack,crashState(spaceId,user.id)); } catch(e){fail(ack,e);} });
-  socket.on('game:crash:bet', (raw, ack: Ack) => { try { const user=auth(socket);const value=z.object({spaceId:z.string(),wager:z.number().int()}).parse(raw);spaceMembers(user.id,value.spaceId);ok(ack,placeCrashBet(value.spaceId,user.id,value.wager)); } catch(e){fail(ack,e);} });
-  socket.on('game:crash:cashout', (raw, ack: Ack) => { try { const user=auth(socket);const {spaceId}=z.object({spaceId:z.string()}).parse(raw);spaceMembers(user.id,spaceId);ok(ack,cashoutCrash(spaceId,user.id)); } catch(e){fail(ack,e);} });
-  socket.on('game:gomoku:rooms', (raw, ack: Ack) => { try { const user=auth(socket);const {spaceId}=z.object({spaceId:z.string()}).parse(raw);spaceMembers(user.id,spaceId);ok(ack,gomokuRooms(spaceId,user.id)); } catch(e){fail(ack,e);} });
-  socket.on('game:gomoku:invite', (raw, ack: Ack) => { try {
-    const user=auth(socket);const value=z.object({spaceId:z.string(),roomId:z.string(),targetUserId:z.string()}).parse(raw);
-    const members=spaceMembers(user.id,value.spaceId);const target=members.find(member=>member.id===value.targetUserId);
-    if(!target)throw new Error('该用户不在当前社区');
-    if(target.id===user.id)throw new Error('不能邀请自己');
-    const state=gomokuState(value.roomId,user.id);
-    if(state.spaceId!==value.spaceId)throw new Error('棋局不属于当前社区');
-    if(state.status!=='waiting'||state.players.length!==1)throw new Error('该棋局已经开始或没有空位');
-    if(!state.players.some(player=>player.id===user.id))throw new Error('只有棋局创建者可以邀请成员');
-    if(gomokuActiveRoomId(target.id))throw new Error('对方正在其他五子棋对局中');
-    const targetSockets=socketsForUser(target.id);
-    if(targetSockets.length===0)throw new Error('该成员当前不在线');
-    const cooldownKey=`${user.id}:${target.id}:${state.roomId}`;const now=Date.now();
-    if((gomokuInviteCooldown.get(cooldownKey)??0)>now)throw new Error('邀请已发送，请稍后再试');
-    gomokuInviteCooldown.set(cooldownKey,now+10_000);
-    const invitation={spaceId:value.spaceId,roomId:state.roomId,wager:state.wager,pot:state.wager*2,inviter:user,expiresAt:now+60_000};
-    for(const connected of targetSockets)connected.emit('game:gomoku:invited',invitation);
-    ok(ack,true);
-  } catch(e){fail(ack,e);} });
-  socket.on('game:gomoku:create', (raw, ack: Ack) => { try {
-    const user=auth(socket);const {spaceId,wager}=z.object({spaceId:z.string(),wager:z.number().int()}).parse(raw);spaceMembers(user.id,spaceId);
-    const state=createGomokuRoom(spaceId,user.id,wager);socket.join(`gomoku:${state.roomId}`);ok(ack,state);
-  } catch(e){fail(ack,e);} });
-  socket.on('game:gomoku:join', (raw, ack: Ack) => { try {
-    const user=auth(socket);const value=z.object({spaceId:z.string(),roomId:z.string()}).parse(raw);spaceMembers(user.id,value.spaceId);
-    const state=joinGomokuRoom(value.roomId,value.spaceId,user.id);socket.join(`gomoku:${state.roomId}`);ok(ack,state);
-  } catch(e){fail(ack,e);} });
-  socket.on('game:gomoku:watch', (raw, ack: Ack) => { try {
-    const user=auth(socket);const value=z.object({spaceId:z.string(),roomId:z.string()}).parse(raw);spaceMembers(user.id,value.spaceId);
-    const state=watchGomokuRoom(value.roomId,value.spaceId,user.id);socket.join(`gomoku:${state.roomId}`);ok(ack,state);
-  } catch(e){fail(ack,e);} });
-  socket.on('game:gomoku:move', (raw, ack: Ack) => { try {
-    const user=auth(socket);const value=z.object({roomId:z.string(),cell:z.number().int().min(0).max(224)}).parse(raw);
-    const state=playGomokuMove(value.roomId,user.id,value.cell);spaceMembers(user.id,state.spaceId);ok(ack,state);
-  } catch(e){fail(ack,e);} });
-  socket.on('game:gomoku:resign', (raw, ack: Ack) => { try { const user=auth(socket);const {roomId}=z.object({roomId:z.string()}).parse(raw);const state=resignGomoku(roomId,user.id);spaceMembers(user.id,state.spaceId);ok(ack,state); } catch(e){fail(ack,e);} });
-  socket.on('game:gomoku:rematch', (raw, ack: Ack) => { try { const user=auth(socket);const {roomId}=z.object({roomId:z.string()}).parse(raw);const state=rematchGomoku(roomId,user.id);spaceMembers(user.id,state.spaceId);ok(ack,state); } catch(e){fail(ack,e);} });
-  socket.on('game:gomoku:leave', (raw, ack: Ack) => { try { const user=auth(socket);const {roomId}=z.object({roomId:z.string()}).parse(raw);leaveGomokuRoom(roomId,user.id);socket.leave(`gomoku:${roomId}`);ok(ack,true); } catch(e){fail(ack,e);} });
+  registerGamePlugins({on:(event,handler)=>socket.on(event,async(raw,ack:Ack)=>{try{
+    const user=auth(socket);const value=await handler(raw,{socket,user,requireSpace:(spaceId:string)=>spaceMembers(user.id,spaceId),socketsForUser,createDirectMessage});ok(ack,value);
+  }catch(error){fail(ack,error);}})});
   socket.on('channel:watch', (raw, ack: Ack) => { try { const channelId=z.object({channelId:z.string()}).parse(raw).channelId; const user=auth(socket); const spaceId=channelSpaceId(channelId);if(!spaceId)throw new Error('频道不存在');spaceMembers(user.id,spaceId);for (const room of socket.rooms) if(room.startsWith('channel:')) socket.leave(room); socket.join(`channel:${channelId}`); ok(ack,true); } catch(e){fail(ack,e);} });
   socket.on('voice:credentials', async (raw, ack: Ack) => { try {
     const user=auth(socket);

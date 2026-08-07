@@ -1,0 +1,18 @@
+import { z } from 'zod';
+import { claimGameDaily, gameHistory, gameOverview } from '../games.js';
+import { defineGame } from './sdk.js';
+
+export const coreGamePlugin=defineGame({
+  manifest:{id:'core',name:'游戏中心',version:1,mode:'space',description:'游戏大厅、钱包、每日奖励与历史记录'},
+  register(host){
+    host.on('game:enter',(raw,{socket,user,requireSpace})=>{
+      const {spaceId}=z.object({spaceId:z.string()}).parse(raw);requireSpace(spaceId);
+      for(const room of socket.rooms)if(room.startsWith('game:'))socket.leave(room);
+      socket.join(`game:${spaceId}`);return gameOverview(user.id,spaceId);
+    });
+    host.on('game:leave',(_raw,{socket})=>{for(const room of socket.rooms)if(room.startsWith('game:')||room.startsWith('gomoku:'))socket.leave(room);return true;});
+    host.on('game:overview',(raw,{user,requireSpace})=>{const {spaceId}=z.object({spaceId:z.string().optional()}).parse(raw);if(spaceId)requireSpace(spaceId);return gameOverview(user.id,spaceId);});
+    host.on('game:daily',(_raw,{user})=>claimGameDaily(user.id));
+    host.on('game:history',(raw,{user})=>{const {limit}=z.object({limit:z.number().int().min(1).max(50).optional()}).parse(raw);return gameHistory(user.id,limit);});
+  },
+});

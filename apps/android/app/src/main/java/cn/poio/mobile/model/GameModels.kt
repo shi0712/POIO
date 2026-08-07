@@ -60,6 +60,17 @@ data class SlotSpin(
     val proof: FairProof,
 )
 
+data class WheelSpin(
+    val id: String,
+    val wager: Long,
+    val segmentIndex: Int,
+    val label: String,
+    val multiplier: Double,
+    val payout: Long,
+    val proof: FairProof,
+    val createdAt: Long,
+)
+
 data class CrashBet(
     val userId: String,
     val username: String,
@@ -136,6 +147,7 @@ data class GameCenterState(
     val blackjack: BlackjackGame? = null,
     val mines: MinesGame? = null,
     val slots: SlotSpin? = null,
+    val wheel: WheelSpin? = null,
     val crash: CrashGame? = null,
     val gomokuRooms: List<GomokuRoom> = emptyList(),
     val gomoku: GomokuGame? = null,
@@ -210,6 +222,14 @@ object GameJson {
             },
             payout = it.optLong("payout"), scatterCount = it.optInt("scatterCount"),
             freeSpinsAwarded = it.optInt("freeSpinsAwarded"), proof = proof(it.optJSONObject("proof")),
+        )
+    }
+
+    fun wheel(value: JSONObject?) = value?.let {
+        WheelSpin(
+            id = it.getString("id"), wager = it.optLong("wager"), segmentIndex = it.optInt("segmentIndex"),
+            label = it.optString("label"), multiplier = it.optDouble("multiplier"), payout = it.optLong("payout"),
+            proof = proof(it.optJSONObject("proof")), createdAt = it.optLong("createdAt"),
         )
     }
 

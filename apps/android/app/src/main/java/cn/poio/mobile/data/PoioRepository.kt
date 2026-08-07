@@ -204,6 +204,15 @@ class PoioRepository(
                 games = mutableState.value.games.copy(gomoku = GameJson.gomoku(value)),
             )
         }
+        client.on("game:gomoku:closed") { args ->
+            val value = args.firstOrNull() as? JSONObject ?: return@on
+            val roomId = value.optString("roomId")
+            val games = mutableState.value.games
+            mutableState.value = mutableState.value.copy(
+                games = games.copy(gomoku = games.gomoku?.takeUnless { it.roomId == roomId }, gomokuRooms = games.gomokuRooms.filterNot { it.roomId == roomId }),
+                gomokuInvitation = mutableState.value.gomokuInvitation?.takeUnless { it.roomId == roomId },
+            )
+        }
         client.on("game:gomoku:invited") { args ->
             val value = args.firstOrNull() as? JSONObject ?: return@on
             val invitation = runCatching { GameJson.gomokuInvitation(value) }.getOrNull() ?: return@on
@@ -465,6 +474,7 @@ class PoioRepository(
                     wallet = GameJson.wallet(value.getJSONObject("wallet")),
                     blackjack = GameJson.blackjack(value.optJSONObject("blackjack")),
                     mines = GameJson.mines(value.optJSONObject("mines")),
+                    wheel = GameJson.wheel(value.optJSONObject("wheel")),
                     crash = GameJson.crash(value.optJSONObject("crash")),
                     gomokuRooms = GameJson.gomokuRooms(value.optJSONArray("gomokuRooms")),
                 ),
@@ -488,6 +498,12 @@ class PoioRepository(
         enterGameCenter(invitation.spaceId)
         openGomoku(invitation.spaceId, invitation.roomId, true)
         if (mutableState.value.games.gomoku?.roomId == invitation.roomId) dismissGomokuInvitation()
+    }
+
+    suspend fun openGomokuInvitation(spaceId: String, roomId: String) {
+        selectSpace(spaceId)
+        enterGameCenter(spaceId)
+        openGomoku(spaceId, roomId, true)
     }
 
     suspend fun claimGameDaily() = gameRequest("game:daily", JSONObject()) { value ->
@@ -516,6 +532,12 @@ class PoioRepository(
             wallet = GameJson.wallet(value.getJSONObject("wallet")),
             slots = GameJson.slot(value.optJSONObject("spin")),
         )
+    }
+
+    suspend fun spinWheel(wager: Long) = gameRequest(
+        "game:wheel:spin", JSONObject().put("wager", wager),
+    ) { value ->
+        mutableState.value.games.copy(wallet = GameJson.wallet(value.getJSONObject("wallet")), wheel = GameJson.wheel(value.optJSONObject("spin")))
     }
 
     suspend fun placeCrashBet(spaceId: String, wager: Long) = gameResponse(

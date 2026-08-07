@@ -7,9 +7,11 @@ import minesCover from './assets/games/mines-cover.png';
 import crashCover from './assets/games/crash-cover.png';
 import slotsCover from './assets/games/slots-cover.png';
 import gomokuCover from './assets/games/gomoku-cover.svg';
+import wheelCover from './assets/games/wheel-cover.svg';
 import './games.css';
+import { desktopGames as games, type DesktopGameId } from './game-plugins/registry';
 
-type GameId='lobby'|'blackjack'|'mines'|'crash'|'slots'|'gomoku';
+type GameId='lobby'|DesktopGameId;
 type Wallet={balance:number;lastDaily:number;nextDailyAt:number;dailyReward:number;freeSpins:number;freeWager:number};
 type FairProof={serverSeedHash:string;clientSeed:string;nonce:number;serverSeed?:string;crashAt?:number};
 type CardData={rank?:string;suit?:'spades'|'hearts'|'diamonds'|'clubs';hidden?:boolean};
@@ -17,6 +19,7 @@ type BlackjackState={id:string;status:'playing'|'won'|'lost'|'push';outcome?:str
 type MinesState={id:string;status:'playing'|'won'|'lost';outcome?:string;wager:number;payout:number;mineCount:number;revealed:number[];mines?:number[];multiplier:number;nextPayout:number;proof:FairProof};
 type SlotSymbol='duck'|'bolt'|'gem'|'crown'|'star'|'wild'|'scatter';
 type SlotSpin={id:string;wager:number;freeSpin:boolean;grid:SlotSymbol[][];wins:Array<{line:number;symbol:SlotSymbol;count:number;payout:number}>;scatterCount:number;scatterPayout:number;freeSpinsAwarded:number;payout:number;proof:FairProof};
+type WheelSpin={id:string;wager:number;segmentIndex:number;label:string;multiplier:number;payout:number;proof:FairProof;createdAt:number};
 type CrashBet={userId:string;username:string;wager:number;status:'playing'|'cashed'|'lost';cashoutMultiplier?:number;payout:number};
 type CrashState={spaceId:string;roundId:string;phase:'betting'|'running'|'crashed';multiplier:number;bettingEndsAt:number;startedAt?:number;endedAt?:number;bets:CrashBet[];myBet?:CrashBet;proof:FairProof};
 type GomokuColor='black'|'white';
@@ -26,20 +29,16 @@ type GomokuState={roomId:string;spaceId:string;wager:number;pot:number;status:'w
 type GameInviteMember={id:string;username:string;avatarUrl?:string};
 type LedgerEntry={id:string;amount:number;balanceAfter:number;kind:string;game?:string;roundId?:string;createdAt:number};
 type GameRound={id:string;game:string;wager:number;payout:number;outcome:string;createdAt:number;completedAt:number};
-type Overview={wallet:Wallet;ledger:LedgerEntry[];history:GameRound[];blackjack?:BlackjackState;mines?:MinesState;slots:{freeSpins:number;freeWager:number};crash?:CrashState;gomokuRooms:GomokuRoom[]};
-
-const games:Array<{id:Exclude<GameId,'lobby'>;name:string;eyebrow:string;description:string;accent:string;art:string;icon:typeof Spade}>=[
-  {id:'blackjack',name:'21 点',eyebrow:'BLACKJACK',description:'要牌、停牌、加倍，与庄家正面对决。',accent:'#9d7cff',art:blackjackCover,icon:Spade},
-  {id:'mines',name:'Mines',eyebrow:'MINES',description:'翻开安全水晶，随时收下不断上涨的倍率。',accent:'#42dfce',art:minesCover,icon:Bomb},
-  {id:'crash',name:'Crash',eyebrow:'CRASH',description:'火箭升空后及时结算，与社区成员共享同一轮。',accent:'#d5ff58',art:crashCover,icon:Rocket},
-  {id:'slots',name:'霓虹转轴',eyebrow:'SLOTS',description:'10 条中奖线、Wild、Scatter 与免费旋转。',accent:'#ff75bc',art:slotsCover,icon:Crown},
-  {id:'gomoku',name:'联机五子棋',eyebrow:'GOMOKU DUEL',description:'创建棋桌，和社区成员实时对弈，支持观战与再战。',accent:'#c9a66b',art:gomokuCover,icon:CircleDot},
-];
+type Overview={wallet:Wallet;ledger:LedgerEntry[];history:GameRound[];blackjack?:BlackjackState;mines?:MinesState;slots:{freeSpins:number;freeWager:number};wheel?:WheelSpin;crash?:CrashState;gomokuRooms:GomokuRoom[]};
 
 const symbolMeta:Record<SlotSymbol,{label:string;className:string}>={
   duck:{label:'◆',className:'duck'},bolt:{label:'ϟ',className:'bolt'},gem:{label:'◇',className:'gem'},
   crown:{label:'♛',className:'crown'},star:{label:'★',className:'star'},wild:{label:'W',className:'wild'},scatter:{label:'S',className:'scatter'},
 };
+const wheelSegments=[
+  {label:'谢谢参与',color:'#ff5f78'},{label:'0.5×',color:'#6f57e8'},{label:'0.8×',color:'#2f8dd8'},{label:'1×',color:'#2ab99f'},{label:'1.2×',color:'#87bc45'},
+  {label:'1.5×',color:'#e8af3d'},{label:'2×',color:'#ed7b39'},{label:'3×',color:'#e3529a'},{label:'5×',color:'#9b5de5'},{label:'10×',color:'#ffd95a'},
+];
 
 function formatPoints(value:number){return Math.floor(value).toLocaleString('zh-CN');}
 function formatTime(value:number){return new Date(value).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});}
@@ -61,10 +60,10 @@ function playGameSound(kind:'tap'|'win'|'lose'|'spin'|'cash'){
 export default function GameCenter({spaceId,spaceName,onlineMembers,joinRoomId,onJoinRoomHandled,onClose,onError}:{spaceId:string;spaceName:string;onlineMembers:GameInviteMember[];joinRoomId?:string;onJoinRoomHandled:()=>void;onClose:()=>void;onError:(error:unknown)=>void}){
   const [active,setActive]=useState<GameId>('lobby');const [overview,setOverview]=useState<Overview>();const [loading,setLoading]=useState(true);
   const [historyOpen,setHistoryOpen]=useState(false);const [soundEnabled,setSoundEnabled]=useState(true);
-  const [blackjackBet,setBlackjackBet]=useState(100);const [minesBet,setMinesBet]=useState(100);const [mineCount,setMineCount]=useState(5);const [slotBet,setSlotBet]=useState(100);const [crashBet,setCrashBet]=useState(100);const [gomokuBet,setGomokuBet]=useState(100);
-  const [busy,setBusy]=useState(false);const [slotSpin,setSlotSpin]=useState<SlotSpin>();const [spinning,setSpinning]=useState(false);const [crashTrace,setCrashTrace]=useState<number[]>([1]);
+  const [blackjackBet,setBlackjackBet]=useState(100);const [minesBet,setMinesBet]=useState(100);const [mineCount,setMineCount]=useState(5);const [slotBet,setSlotBet]=useState(100);const [wheelBet,setWheelBet]=useState(100);const [crashBet,setCrashBet]=useState(100);const [gomokuBet,setGomokuBet]=useState(100);
+  const [busy,setBusy]=useState(false);const [slotSpin,setSlotSpin]=useState<SlotSpin>();const [spinning,setSpinning]=useState(false);const [wheelSpin,setWheelSpin]=useState<WheelSpin>();const [wheelSpinning,setWheelSpinning]=useState(false);const [wheelRotation,setWheelRotation]=useState(0);const [crashTrace,setCrashTrace]=useState<number[]>([1]);
   const [gomoku,setGomoku]=useState<GomokuState>();
-  const [gomokuInviteOpen,setGomokuInviteOpen]=useState(false);const [gomokuInviteBusy,setGomokuInviteBusy]=useState('');const [gomokuInvited,setGomokuInvited]=useState<string[]>([]);
+  const [gomokuInviteOpen,setGomokuInviteOpen]=useState(false);const [gomokuInviteBusy,setGomokuInviteBusy]=useState('');const [gomokuInvited,setGomokuInvited]=useState<Record<string,number>>({});const [gomokuInviteClock,setGomokuInviteClock]=useState(Date.now());
   const crashRound=useRef('');
   const wallet=overview?.wallet;
 
@@ -78,14 +77,18 @@ export default function GameCenter({spaceId,spaceName,onlineMembers,joinRoomId,o
 
   useEffect(()=>{
     let disposed=false;setLoading(true);
-    request<Overview>('game:enter',{spaceId}).then(value=>{if(!disposed){setOverview(value);setLoading(false)}}).catch(error=>{if(!disposed){setLoading(false);onError(error)}});
+    request<Overview>('game:enter',{spaceId}).then(value=>{if(!disposed){setOverview(value);setWheelSpin(value.wheel);setLoading(false)}}).catch(error=>{if(!disposed){setLoading(false);onError(error)}});
     const walletUpdate=(next:Wallet)=>setOverview(current=>current?{...current,wallet:next,slots:{freeSpins:next.freeSpins,freeWager:next.freeWager}}:current);
     const crashUpdate=(next:CrashState)=>setOverview(current=>current?{...current,crash:next}:current);
     const gomokuRoomsUpdate=(rooms:GomokuRoom[])=>setOverview(current=>current?{...current,gomokuRooms:rooms}:current);
     const gomokuStateUpdate=(state:GomokuState)=>setGomoku(current=>!current||current.roomId===state.roomId?state:current);
-    socket.on('game:wallet',walletUpdate);socket.on('game:crash',crashUpdate);socket.on('game:gomoku:rooms',gomokuRoomsUpdate);socket.on('game:gomoku:state',gomokuStateUpdate);
-    return()=>{disposed=true;socket.off('game:wallet',walletUpdate);socket.off('game:crash',crashUpdate);socket.off('game:gomoku:rooms',gomokuRoomsUpdate);socket.off('game:gomoku:state',gomokuStateUpdate);void request('game:leave').catch(()=>{})};
+    const gomokuClosed=({roomId}:{roomId:string})=>{setGomoku(current=>current?.roomId===roomId?undefined:current);setOverview(current=>current?{...current,gomokuRooms:current.gomokuRooms.filter(room=>room.roomId!==roomId)}:current)};
+    socket.on('game:wallet',walletUpdate);socket.on('game:crash',crashUpdate);socket.on('game:gomoku:rooms',gomokuRoomsUpdate);socket.on('game:gomoku:state',gomokuStateUpdate);socket.on('game:gomoku:closed',gomokuClosed);
+    return()=>{disposed=true;socket.off('game:wallet',walletUpdate);socket.off('game:crash',crashUpdate);socket.off('game:gomoku:rooms',gomokuRoomsUpdate);socket.off('game:gomoku:state',gomokuStateUpdate);socket.off('game:gomoku:closed',gomokuClosed);void request('game:leave').catch(()=>{})};
   },[spaceId]);
+
+  useEffect(()=>{setGomokuInvited({});setGomokuInviteOpen(false)},[gomoku?.roomId]);
+  useEffect(()=>{if(!gomokuInviteOpen)return;setGomokuInviteClock(Date.now());const timer=window.setInterval(()=>setGomokuInviteClock(Date.now()),500);return()=>window.clearInterval(timer)},[gomokuInviteOpen]);
 
   useEffect(()=>{
     if(!joinRoomId)return;
@@ -126,6 +129,15 @@ export default function GameCenter({spaceId,spaceName,onlineMembers,joinRoomId,o
       await new Promise(resolve=>window.setTimeout(resolve,950));applyResponse(value,'slots');sound(value.spin.payout>0?'win':'tap');
     }catch(error){onError(error)}finally{setBusy(false);setSpinning(false)}
   };
+  const spinWheelGame=async()=>{
+    if(busy||wheelSpinning)return;setBusy(true);setWheelSpinning(true);sound('spin');
+    try{
+      const value=await request<{spin:WheelSpin;wallet:Wallet}>('game:wheel:spin',{wager:wheelBet});
+      const turns=5+Math.floor(Math.random()*2),center=value.spin.segmentIndex*36+18;
+      setWheelRotation(current=>current+turns*360+(360-(center+current%360))%360);
+      await new Promise(resolve=>window.setTimeout(resolve,2800));setWheelSpin(value.spin);setOverview(current=>current?{...current,wallet:value.wallet,wheel:value.spin}:current);sound(value.spin.payout>value.spin.wager?'win':value.spin.payout?'tap':'lose');
+    }catch(error){onError(error)}finally{setBusy(false);setWheelSpinning(false)}
+  };
   const placeCrash=()=>void act(()=>request<{state:CrashState;wallet:Wallet}>('game:crash:bet',{spaceId,wager:crashBet}),value=>{setOverview(current=>current?{...current,wallet:value.wallet,crash:value.state}:current);sound('tap')});
   const cashCrash=()=>void act(()=>request<{state:CrashState;wallet:Wallet}>('game:crash:cashout',{spaceId}),value=>{setOverview(current=>current?{...current,wallet:value.wallet,crash:value.state}:current);sound('cash')});
   const applyGomoku=(state:GomokuState)=>{setGomoku(state);sound(state.status==='finished'?(state.winnerId&&state.players.find(player=>player.color===state.me)?.id===state.winnerId?'win':'lose'):'tap')};
@@ -137,7 +149,7 @@ export default function GameCenter({spaceId,spaceName,onlineMembers,joinRoomId,o
   const gomokuLeave=()=>void act(()=>request('game:gomoku:leave',{roomId:gomoku!.roomId}),()=>{setGomoku(undefined);sound('tap')});
   const inviteGomoku=async(member:GameInviteMember)=>{
     if(!gomoku||gomokuInviteBusy)return;setGomokuInviteBusy(member.id);
-    try{await request('game:gomoku:invite',{spaceId,roomId:gomoku.roomId,targetUserId:member.id});setGomokuInvited(current=>current.includes(member.id)?current:[...current,member.id]);}
+    try{const value=await request<{canResendAt:number}>('game:gomoku:invite',{spaceId,roomId:gomoku.roomId,targetUserId:member.id});setGomokuInvited(current=>({...current,[member.id]:value.canResendAt}));}
     catch(error){onError(error)}finally{setGomokuInviteBusy('')}
   };
 
@@ -161,10 +173,11 @@ export default function GameCenter({spaceId,spaceName,onlineMembers,joinRoomId,o
     {active==='mines'&&<MinesGame state={overview.mines} wager={minesBet} setWager={setMinesBet} mineCount={mineCount} setMineCount={setMineCount} busy={busy} onStart={startMinesGame} onReveal={revealCell} onCashout={cashMines}/>} 
     {active==='crash'&&<CrashGame state={overview.crash!} trace={crashTrace} wager={crashBet} setWager={setCrashBet} busy={busy} onBet={placeCrash} onCashout={cashCrash}/>} 
     {active==='slots'&&<SlotsGame spin={slotSpin} wallet={wallet!} wager={slotBet} setWager={setSlotBet} spinning={spinning} busy={busy} onSpin={spin}/>} 
+    {active==='wheel'&&<WheelGame spin={wheelSpin} wager={wheelBet} setWager={setWheelBet} rotation={wheelRotation} spinning={wheelSpinning} busy={busy} onSpin={spinWheelGame}/>}
     {active==='gomoku'&&<GomokuGame state={gomoku} rooms={overview.gomokuRooms??[]} wager={gomokuBet} setWager={setGomokuBet} busy={busy} onCreate={createGomoku} onOpen={openGomoku} onMove={gomokuMove} onResign={gomokuResign} onRematch={gomokuRematch} onLeave={gomokuLeave} onInvite={()=>setGomokuInviteOpen(true)}/>}
 
     {historyOpen&&<HistoryDrawer ledger={overview.ledger} rounds={overview.history} onClose={()=>setHistoryOpen(false)}/>} 
-    {gomokuInviteOpen&&gomoku&&<GomokuInvitePicker members={onlineMembers.filter(member=>!gomoku.players.some(player=>player.id===member.id))} invited={gomokuInvited} busy={gomokuInviteBusy} wager={gomoku.wager} onInvite={member=>void inviteGomoku(member)} onClose={()=>setGomokuInviteOpen(false)}/>}
+    {gomokuInviteOpen&&gomoku&&<GomokuInvitePicker members={onlineMembers.filter(member=>!gomoku.players.some(player=>player.id===member.id))} invited={gomokuInvited} now={gomokuInviteClock} busy={gomokuInviteBusy} wager={gomoku.wager} onInvite={member=>void inviteGomoku(member)} onClose={()=>setGomokuInviteOpen(false)}/>}
   </section>;
 }
 
@@ -271,8 +284,17 @@ function GomokuGame({state,rooms,wager,setWager,busy,onCreate,onOpen,onMove,onRe
   </GameStage>;
 }
 
-function GomokuInvitePicker({members,invited,busy,wager,onInvite,onClose}:{members:GameInviteMember[];invited:string[];busy:string;wager:number;onInvite:(member:GameInviteMember)=>void;onClose:()=>void}){
-  return <div className="gomoku-invite-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)onClose()}}><section className="gomoku-invite-picker"><header><div><UserPlus/><span><b>邀请在线成员</b><small>对方加入时将支付 {formatPoints(wager)} 积分</small></span></div><button onClick={onClose}><X/></button></header><div className="gomoku-invite-members">{members.length===0?<div className="gomoku-invite-empty"><UserPlus/><b>暂时没有可邀请的在线成员</b><span>成员上线后会自动出现在这里。</span></div>:members.map(member=><article key={member.id}><div className="gomoku-invite-avatar">{member.avatarUrl?<img src={member.avatarUrl} alt=""/>:member.username.slice(0,1).toUpperCase()}</div><span><b>{member.username}</b><small><i/>在线</small></span><button disabled={!!busy||invited.includes(member.id)} onClick={()=>onInvite(member)}>{busy===member.id?'发送中…':invited.includes(member.id)?<><Check/>已邀请</>:<><UserPlus/>邀请</>}</button></article>)}</div></section></div>;
+function GomokuInvitePicker({members,invited,now,busy,wager,onInvite,onClose}:{members:GameInviteMember[];invited:Record<string,number>;now:number;busy:string;wager:number;onInvite:(member:GameInviteMember)=>void;onClose:()=>void}){
+  return <div className="gomoku-invite-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)onClose()}}><section className="gomoku-invite-picker"><header><div><UserPlus/><span><b>邀请在线成员</b><small>对方加入时将支付 {formatPoints(wager)} 积分</small></span></div><button onClick={onClose}><X/></button></header><div className="gomoku-invite-members">{members.length===0?<div className="gomoku-invite-empty"><UserPlus/><b>暂时没有可邀请的在线成员</b><span>成员上线后会自动出现在这里。</span></div>:members.map(member=>{const resendAt=invited[member.id]??0;const cooling=resendAt>now;return <article key={member.id}><div className="gomoku-invite-avatar">{member.avatarUrl?<img src={member.avatarUrl} alt=""/>:member.username.slice(0,1).toUpperCase()}</div><span><b>{member.username}</b><small><i/>在线</small></span><button disabled={!!busy||cooling} onClick={()=>onInvite(member)}>{busy===member.id?'发送中…':cooling?<><Check/>已邀请 {Math.ceil((resendAt-now)/1000)}s</>:resendAt?<><UserPlus/>重新邀请</>:<><UserPlus/>邀请</>}</button></article>})}</div></section></div>;
+}
+
+function WheelGame({spin,wager,setWager,rotation,spinning,busy,onSpin}:{spin?:WheelSpin;wager:number;setWager:(value:number)=>void;rotation:number;spinning:boolean;busy:boolean;onSpin:()=>void}){
+  return <GameStage title="幸运大转盘" eyebrow="LUCKY WHEEL" description="选择积分后转动转盘，结果由服务端生成并可通过公开种子复算。" icon={<Dices/>} accent="#ffd85a" art={wheelCover}>
+    <div className="wheel-arena"><div className="wheel-halo"/><div className="wheel-pointer"/><div className="lucky-wheel" style={{transform:`rotate(${rotation}deg)`}}>{wheelSegments.map((segment,index)=><span key={segment.label} style={{'--angle':`${index*36+18}deg`} as React.CSSProperties}>{segment.label}</span>)}<i><b>POIO</b><small>LUCK</small></i></div>
+      {spin&&!spinning&&<div className={`wheel-result ${spin.payout>spin.wager?'won':spin.payout?'even':'lost'}`}><Sparkles/><b>{spin.label}</b><span>{spin.payout?`获得 ${formatPoints(spin.payout)} 积分`:'本轮未中奖'}</span></div>}
+    </div>
+    <div className="game-control-panel wheel-controls"><FairBadge proof={spin?.proof}/><BetControls value={wager} setValue={setWager} disabled={spinning}/><div className="wheel-odds"><span>10 个奖励格</span><b>最高 10×</b><small>仅使用娱乐积分</small></div><button className="primary-game-action wheel-spin-action" disabled={busy||spinning} onClick={onSpin}><Dices/>{spinning?'转动中…':`转动 · ${formatPoints(wager)}`}</button></div>
+  </GameStage>;
 }
 
 function SlotsGame({spin,wallet,wager,setWager,spinning,busy,onSpin}:{spin?:SlotSpin;wallet:Wallet;wager:number;setWager:(v:number)=>void;spinning:boolean;busy:boolean;onSpin:(free?:boolean)=>void}){

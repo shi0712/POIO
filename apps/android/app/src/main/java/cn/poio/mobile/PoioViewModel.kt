@@ -139,6 +139,7 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
     override fun revealMine(cell: Int) { viewModelScope.launch { repository.revealMine(cell) } }
     override fun cashoutMines() { viewModelScope.launch { repository.cashoutMines() } }
     override fun spinSlots(wager: Long, useFreeSpin: Boolean) { viewModelScope.launch { repository.spinSlots(wager, useFreeSpin) } }
+    override fun spinWheel(wager: Long) { viewModelScope.launch { repository.spinWheel(wager) } }
     override fun placeCrashBet(spaceId: String, wager: Long) { viewModelScope.launch { repository.placeCrashBet(spaceId, wager) } }
     override fun cashoutCrash(spaceId: String) { viewModelScope.launch { repository.cashoutCrash(spaceId) } }
     override fun createGomoku(spaceId: String, wager: Long) { viewModelScope.launch { repository.createGomoku(spaceId, wager) } }
@@ -148,6 +149,7 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
     override fun rematchGomoku(roomId: String) { viewModelScope.launch { repository.rematchGomoku(roomId) } }
     override fun leaveGomoku(roomId: String) { viewModelScope.launch { repository.leaveGomoku(roomId) } }
     override fun acceptGomokuInvitation() { viewModelScope.launch { repository.acceptGomokuInvitation() } }
+    override fun openGomokuInvitation(spaceId: String, roomId: String) { viewModelScope.launch { repository.openGomokuInvitation(spaceId, roomId) } }
     override fun dismissGomokuInvitation() = repository.dismissGomokuInvitation()
     override fun inviteGomoku(spaceId: String, roomId: String, targetUserId: String) { viewModelScope.launch { repository.inviteGomoku(spaceId, roomId, targetUserId) } }
     override fun joinVoice(channelId: String) {
@@ -337,6 +339,7 @@ interface PoioActions {
     fun revealMine(cell: Int)
     fun cashoutMines()
     fun spinSlots(wager: Long, useFreeSpin: Boolean)
+    fun spinWheel(wager: Long)
     fun placeCrashBet(spaceId: String, wager: Long)
     fun cashoutCrash(spaceId: String)
     fun createGomoku(spaceId: String, wager: Long)
@@ -346,6 +349,7 @@ interface PoioActions {
     fun rematchGomoku(roomId: String)
     fun leaveGomoku(roomId: String)
     fun acceptGomokuInvitation()
+    fun openGomokuInvitation(spaceId: String, roomId: String)
     fun dismissGomokuInvitation()
     fun inviteGomoku(spaceId: String, roomId: String, targetUserId: String)
     fun joinVoice(channelId: String)

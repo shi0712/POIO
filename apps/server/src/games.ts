@@ -332,6 +332,37 @@ export function playSlots(userId:string,wagerValue:number,useFreeSpin=false){
   })();emitWallet(userId);return {spin:result,wallet:gameWallet(userId)};
 }
 
+export const WHEEL_SEGMENTS=[
+  {label:'谢谢参与',multiplier:0,weight:1200,color:'#ff5f78'},
+  {label:'0.5×',multiplier:.5,weight:1000,color:'#6f57e8'},
+  {label:'0.8×',multiplier:.8,weight:1000,color:'#2f8dd8'},
+  {label:'1×',multiplier:1,weight:4000,color:'#2ab99f'},
+  {label:'1.2×',multiplier:1.2,weight:1500,color:'#87bc45'},
+  {label:'1.5×',multiplier:1.5,weight:700,color:'#e8af3d'},
+  {label:'2×',multiplier:2,weight:400,color:'#ed7b39'},
+  {label:'3×',multiplier:3,weight:150,color:'#e3529a'},
+  {label:'5×',multiplier:5,weight:45,color:'#9b5de5'},
+  {label:'10×',multiplier:10,weight:5,color:'#ffd95a'},
+] as const;
+
+type WheelSpin={id:string;wager:number;segmentIndex:number;label:string;multiplier:number;payout:number;proof:FairSecret;createdAt:number};
+export function wheelState(userId:string){return loadSession<WheelSpin>(userId,'wheel');}
+
+export function spinWheel(userId:string,wagerValue:number){
+  const result=db.transaction(()=>{
+    const wager=checkedWager(wagerValue,{multiple:10});const id=nanoid();const createdAt=Date.now();
+    changeBalance(userId,-wager,'wager','wheel',id);
+    const proof=createFairSecret(`${userId}:${id}`);const random=new FairRandom(proof);const total=WHEEL_SEGMENTS.reduce((sum,item)=>sum+item.weight,0);
+    let draw=random.int(total),segmentIndex=0;
+    for(let index=0;index<WHEEL_SEGMENTS.length;index++){draw-=WHEEL_SEGMENTS[index].weight;if(draw<0){segmentIndex=index;break;}}
+    const segment=WHEEL_SEGMENTS[segmentIndex];const payout=Math.floor(wager*segment.multiplier);
+    if(payout>0)changeBalance(userId,payout,'payout','wheel',id);
+    const spin:WheelSpin={id,wager,segmentIndex,label:segment.label,multiplier:segment.multiplier,payout,proof:{...proof,serverSeed:proof.serverSeed},createdAt};
+    saveSession(userId,'wheel',spin);recordRound(userId,'wheel',id,wager,payout,segment.multiplier?`${segment.label} 倍率`:'谢谢参与',proof,{segmentIndex,label:segment.label,multiplier:segment.multiplier},createdAt);
+    return spin;
+  })();emitWallet(userId);return {spin:result,wallet:gameWallet(userId)};
+}
+
 type CrashPhase='betting'|'running'|'crashed';
 type CrashRoom={
   spaceId:string;roundId:string;phase:CrashPhase;proof:FairSecret;crashAt:number;
@@ -481,7 +512,7 @@ export function gomokuRooms(spaceId:string,userId:string){
   });
 }
 
-function emitGomoku(row:GomokuRow){gameEvents.emit('gomoku:update',{spaceId:row.spaceId,roomId:row.id});}
+function emitGomoku(row:GomokuRow,closed=false){gameEvents.emit('gomoku:update',{spaceId:row.spaceId,roomId:row.id,closed});}
 
 function activeGomokuRoom(userId:string){
   return db.prepare(`SELECT id FROM game_gomoku_rooms WHERE status IN ('waiting','playing')
@@ -583,13 +614,13 @@ export function rematchGomoku(roomId:string,userId:string){
 
 export function leaveGomokuRoom(roomId:string,userId:string){
   const row=gomokuRow(roomId);if(!row)return true;
-  if(row.status==='waiting'&&row.blackUserId===userId){db.transaction(()=>{changeBalance(userId,row.wager,'payout','gomoku',roomId);db.prepare('DELETE FROM game_gomoku_rooms WHERE id=?').run(roomId);})();emitWallet(userId);emitGomoku(row);return true;}
+  if(row.status==='waiting'&&row.blackUserId===userId){db.transaction(()=>{changeBalance(userId,row.wager,'payout','gomoku',roomId);db.prepare('DELETE FROM game_gomoku_rooms WHERE id=?').run(roomId);})();emitWallet(userId);emitGomoku(row,true);return true;}
   if(row.status==='playing'&&(row.blackUserId===userId||row.whiteUserId===userId)){resignGomoku(roomId,userId);return true;}
   return true;
 }
 
 export function gameOverview(userId:string,spaceId?:string){
   return {wallet:gameWallet(userId),ledger:gameLedger(userId,12),history:gameHistory(userId,12),
-    blackjack:blackjackState(userId),mines:minesState(userId),slots:slotState(userId),
+    blackjack:blackjackState(userId),mines:minesState(userId),slots:slotState(userId),wheel:wheelState(userId),
     crash:spaceId?crashState(spaceId,userId):undefined,gomokuRooms:spaceId?gomokuRooms(spaceId,userId):[]};
 }

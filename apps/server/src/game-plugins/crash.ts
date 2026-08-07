@@ -1,0 +1,14 @@
+import { z } from 'zod';
+import { cashoutCrash, crashState, placeCrashBet } from '../games.js';
+import { defineGame } from './sdk.js';
+
+export const crashPlugin=defineGame({
+  manifest:{id:'crash',name:'Crash',version:1,mode:'space',description:'社区成员共享同一轮火箭倍率'},
+  register(host){
+    const input=z.object({spaceId:z.string()});
+    host.on('game:crash:state',(raw,{user,requireSpace})=>{const {spaceId}=input.parse(raw);requireSpace(spaceId);return crashState(spaceId,user.id);});
+    host.on('game:crash:bet',(raw,{user,requireSpace})=>{const value=z.object({spaceId:z.string(),wager:z.number().int()}).parse(raw);requireSpace(value.spaceId);return placeCrashBet(value.spaceId,user.id,value.wager);});
+    host.on('game:crash:cashout',(raw,{user,requireSpace})=>{const {spaceId}=input.parse(raw);requireSpace(spaceId);return cashoutCrash(spaceId,user.id);});
+  },
+});
+
