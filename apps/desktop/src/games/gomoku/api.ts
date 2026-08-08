@@ -1,0 +1,10 @@
+import { request } from '../../api';
+import type { GomokuRoom, GomokuState } from './types';
+export const joinGomoku=(spaceId:string,roomId:string)=>request<GomokuState>('game:gomoku:join',{spaceId,roomId});
+export const createGomokuRoom=(spaceId:string,wager:number)=>request<GomokuState>('game:gomoku:create',{spaceId,wager});
+export const openGomokuRoom=(spaceId:string,room:GomokuRoom)=>request<GomokuState>(room.isMine||room.status==='waiting'?'game:gomoku:join':'game:gomoku:watch',{spaceId,roomId:room.roomId});
+export const moveGomoku=(roomId:string,cell:number)=>request<GomokuState>('game:gomoku:move',{roomId,cell});
+export const resignGomoku=(roomId:string)=>request<GomokuState>('game:gomoku:resign',{roomId});
+export const rematchGomoku=(roomId:string)=>request<GomokuState>('game:gomoku:rematch',{roomId});
+export const leaveGomoku=(roomId:string)=>request('game:gomoku:leave',{roomId});
+export const inviteGomokuMember=(spaceId:string,roomId:string,targetUserId:string)=>request<{canResendAt:number}>('game:gomoku:invite',{spaceId,roomId,targetUserId});

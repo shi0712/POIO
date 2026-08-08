@@ -1,11 +1,11 @@
-import { blackjackPlugin } from './blackjack.js';
-import { coreGamePlugin } from './core.js';
-import { crashPlugin } from './crash.js';
-import { gomokuPlugin } from './gomoku.js';
-import { minesPlugin } from './mines.js';
+import { blackjackPlugin } from '../games/blackjack/plugin.js';
+import { coreGamePlugin } from '../games/shared/plugin.js';
+import { crashPlugin } from '../games/crash/plugin.js';
+import { gomokuPlugin } from '../games/gomoku/plugin.js';
+import { minesPlugin } from '../games/mines/plugin.js';
 import type { GamePlugin } from './sdk.js';
-import { slotsPlugin } from './slots.js';
-import { wheelPlugin } from './wheel.js';
+import { slotsPlugin } from '../games/slots/plugin.js';
+import { wheelPlugin } from '../games/wheel/plugin.js';
 
 export const gamePlugins:GamePlugin[]=[coreGamePlugin,blackjackPlugin,minesPlugin,crashPlugin,slotsPlugin,wheelPlugin,gomokuPlugin];
 

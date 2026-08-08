@@ -1,0 +1,86 @@
+name: Publish Windows and Android release assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: POIO version without the v prefix
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout release metadata
+        uses: actions/checkout@v6
+
+      - name: Download verified GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" --dir artifact \
+            --pattern "POIO-$VERSION-x64-Setup.exe" \
+            --pattern "POIO-$VERSION-x64-Setup.exe.blockmap" \
+            --pattern "POIO-Android-$VERSION-arm64.apk" \
+            --pattern "latest.yml"
+          test -f "artifact/POIO-$VERSION-x64-Setup.exe"
+          test -f "artifact/POIO-$VERSION-x64-Setup.exe.blockmap"
+          test -f "artifact/POIO-Android-$VERSION-arm64.apk"
+          test -f artifact/latest.yml
+
+      - name: Publish stable Windows and Android files to ModelScope
+        env:
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          test -n "$MODELSCOPE_TOKEN"
+          git lfs install
+          git clone "https://oauth2:${MODELSCOPE_TOKEN}@www.modelscope.cn/sjw712/POIO.git" modelscope
+
+          find modelscope -maxdepth 1 -type f \
+            \( -name 'POIO-*-x64-Setup.exe' -o -name 'POIO-*-x64-Setup.exe.blockmap' \) \
+            ! -name 'POIO-Windows-latest-x64-Setup.exe' \
+            ! -name 'POIO-Windows-latest-x64-Setup.exe.blockmap' -delete
+
+          cp "artifact/POIO-$VERSION-x64-Setup.exe" modelscope/POIO-Windows-latest-x64-Setup.exe
+          cp "artifact/POIO-$VERSION-x64-Setup.exe.blockmap" modelscope/POIO-Windows-latest-x64-Setup.exe.blockmap
+          cp "artifact/POIO-Android-$VERSION-arm64.apk" modelscope/POIO-Android-latest-arm64.apk
+          python3 - artifact/latest.yml modelscope/latest.yml "$VERSION" <<'PY'
+          import pathlib
+          import sys
+
+          source, target, version = sys.argv[1:]
+          text = pathlib.Path(source).read_text(encoding="utf-8")
+          text = text.replace(
+              f"POIO-{version}-x64-Setup.exe.blockmap",
+              "POIO-Windows-latest-x64-Setup.exe.blockmap",
+          )
+          text = text.replace(
+              f"POIO-{version}-x64-Setup.exe",
+              "POIO-Windows-latest-x64-Setup.exe",
+          )
+          pathlib.Path(target).write_text(text, encoding="utf-8")
+          PY
+
+          git -C modelscope config user.name "POIO Release Bot"
+          git -C modelscope config user.email "actions@users.noreply.github.com"
+          git -C modelscope add -A -- \
+            POIO-Windows-latest-x64-Setup.exe \
+            POIO-Windows-latest-x64-Setup.exe.blockmap \
+            POIO-Android-latest-arm64.apk \
+            latest.yml
+          if git -C modelscope diff --cached --quiet; then
+            echo "ModelScope already contains the requested stable assets."
+          else
+            git -C modelscope commit -m "release: publish POIO $VERSION Windows and Android"
+            git -C modelscope push
+          fi

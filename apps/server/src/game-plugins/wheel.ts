@@ -1,12 +1,1 @@
-import { z } from 'zod';
-import { spinWheel, wheelState } from '../games.js';
-import { defineGame } from './sdk.js';
-
-export const wheelPlugin=defineGame({
-  manifest:{id:'wheel',name:'幸运大转盘',version:1,mode:'solo',description:'服务端判定的可验证公平倍率转盘'},
-  register(host){
-    host.on('game:wheel:state',(_raw,{user})=>wheelState(user.id));
-    host.on('game:wheel:spin',(raw,{user})=>spinWheel(user.id,z.object({wager:z.number().int()}).parse(raw).wager));
-  },
-});
-
+export { wheelPlugin } from '../games/wheel/plugin.js';
