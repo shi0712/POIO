@@ -2,6 +2,8 @@ node_modules/
 dist/
 dist-electron/
 release/
+!scripts/release/
+!scripts/release/deploy-production.sh
 apps/desktop/release-*/
 releases/
 /data/

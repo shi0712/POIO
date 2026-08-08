@@ -12,13 +12,15 @@
   <a href="https://www.modelscope.cn/models/sjw712/POIO/files">ModelScope 镜像</a>
 </p>
 
-> 当前版本：**POIO 1.3.1**，提供 Windows x64、macOS Apple Silicon、Android arm64 与网页版。桌面在线更新和官网下载使用 ModelScope；安装包尚未进行代码签名，首次运行时可能显示系统安全提示。
+> 当前版本：**POIO 1.4.0**，提供 Windows x64、macOS Apple Silicon、Android arm64 与网页版。桌面在线更新和官网下载使用 ModelScope；安装包尚未进行代码签名，首次运行时可能显示系统安全提示。
 
 游戏从 1.3.0 起采用独立插件注册机制；新增游戏请阅读 [POIO 游戏开发手册](docs/GAME_DEVELOPMENT.md)。
 
+正式发布统一由 GitHub Actions 的 `Release POIO` 工作流完成：验证源码后并行构建 Windows、Android 和 macOS，创建 GitHub Release、同步 ModelScope，并在所有构建成功后自动部署服务器和网页。
+
 ## 已实现功能
 
-- POIO 游戏中心：21 点、Mines、社区多人 Crash、5×3 霓虹转轴、幸运大转盘和联机五子棋；包含娱乐积分、每日奖励、免费旋转、积分流水和对局记录。所有下注与结算均由服务端判定，每局公布 SHA-256 随机种子摘要并在结束后公开原始种子。娱乐积分不可充值、提现或兑换。
+- POIO 游戏中心：21 点、Mines、社区多人 Crash、5×3 霓虹转轴、幸运大转盘、联机五子棋和 2–6 人德州扑克；德州扑克包含大小盲、四轮下注、全下、边池、观战、邀请和掉线恢复。所有下注与结算均由服务端判定，每局公布 SHA-256 随机种子摘要并在结束后公开原始种子。娱乐积分不可充值、提现或兑换。
 - 原生 Mumble + Opus 语音链路，支持输入/输出设备切换、麦克风测试、实时音量反馈、静音、关闭声音、挂断与自动重连。
 - Windows 原生全局静音快捷键与按住说话，支持键盘组合键和鼠标侧键，POIO 在托盘后台时仍然生效。
 - Windows 的成员说话动画、麦克风状态和托盘提示直接读取 Mumble 原生发送状态，按键说话模式下不会把未发送的环境音误判为正在说话。

@@ -7,3 +7,5 @@ export * from './slots/index.js';
 export * from './wheel/index.js';
 export * from './crash/index.js';
 export * from './gomoku/index.js';
+export * from './texas-holdem/index.js';
+export * from './texas-holdem/evaluator.js';

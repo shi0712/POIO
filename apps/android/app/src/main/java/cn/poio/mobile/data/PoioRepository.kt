@@ -12,6 +12,7 @@ import cn.poio.mobile.model.DirectMessage
 import cn.poio.mobile.model.GameCenterState
 import cn.poio.mobile.model.GameJson
 import cn.poio.mobile.model.GomokuInvitation
+import cn.poio.mobile.model.TexasInvitation
 import cn.poio.mobile.model.PoioJson
 import cn.poio.mobile.model.ServerCapabilities
 import cn.poio.mobile.model.Space
@@ -62,6 +63,7 @@ data class PoioState(
     val directMessages: List<DirectMessage> = emptyList(),
     val games: GameCenterState = GameCenterState(),
     val gomokuInvitation: GomokuInvitation? = null,
+    val texasInvitation: TexasInvitation? = null,
     val inviteCode: String? = null,
     /** Increments only after this Socket.IO connection has authenticated. */
     val authenticatedConnectionGeneration: Long = 0,
@@ -223,6 +225,32 @@ class PoioRepository(
                 if (mutableState.value.gomokuInvitation?.roomId == invitation.roomId) {
                     mutableState.value = mutableState.value.copy(gomokuInvitation = null)
                 }
+            }
+        }
+        client.on("game:texas-holdem:rooms") { args ->
+            val value = args.firstOrNull() as? org.json.JSONArray ?: return@on
+            mutableState.value = mutableState.value.copy(games = mutableState.value.games.copy(texasRooms = GameJson.texasRooms(value)))
+        }
+        client.on("game:texas-holdem:state") { args ->
+            val value = args.firstOrNull() as? JSONObject ?: return@on
+            mutableState.value = mutableState.value.copy(games = mutableState.value.games.copy(texas = GameJson.texas(value)))
+        }
+        client.on("game:texas-holdem:closed") { args ->
+            val value = args.firstOrNull() as? JSONObject ?: return@on
+            val roomId = value.optString("roomId"); val games = mutableState.value.games
+            mutableState.value = mutableState.value.copy(
+                games = games.copy(texas = games.texas?.takeUnless { it.roomId == roomId }, texasRooms = games.texasRooms.filterNot { it.roomId == roomId }),
+                texasInvitation = mutableState.value.texasInvitation?.takeUnless { it.roomId == roomId },
+            )
+        }
+        client.on("game:texas-holdem:invited") { args ->
+            val value = args.firstOrNull() as? JSONObject ?: return@on
+            val invitation = runCatching { GameJson.texasInvitation(value) }.getOrNull() ?: return@on
+            if (invitation.expiresAt <= System.currentTimeMillis()) return@on
+            mutableState.value = mutableState.value.copy(texasInvitation = invitation)
+            scope.launch {
+                delay((invitation.expiresAt - System.currentTimeMillis()).coerceAtLeast(0))
+                if (mutableState.value.texasInvitation?.roomId == invitation.roomId) mutableState.value = mutableState.value.copy(texasInvitation = null)
             }
         }
         client.connect(
@@ -477,6 +505,7 @@ class PoioRepository(
                     wheel = GameJson.wheel(value.optJSONObject("wheel")),
                     crash = GameJson.crash(value.optJSONObject("crash")),
                     gomokuRooms = GameJson.gomokuRooms(value.optJSONArray("gomokuRooms")),
+                    texasRooms = GameJson.texasRooms(value.optJSONArray("texasRooms")),
                 ),
             )
         }
@@ -577,6 +606,33 @@ class PoioRepository(
     suspend fun inviteGomoku(spaceId: String, roomId: String, targetUserId: String) = guarded {
         client.request("game:gomoku:invite", JSONObject().put("spaceId", spaceId).put("roomId", roomId).put("targetUserId", targetUserId))
     }
+
+    suspend fun createTexas(spaceId: String, smallBlind: Long, buyIn: Long, maxPlayers: Int) = texasRequest(
+        "game:texas-holdem:create", JSONObject().put("spaceId", spaceId).put("smallBlind", smallBlind).put("buyIn", buyIn).put("maxPlayers", maxPlayers),
+    )
+    suspend fun openTexas(spaceId: String, roomId: String, join: Boolean) = texasRequest(
+        if (join) "game:texas-holdem:join" else "game:texas-holdem:watch", JSONObject().put("spaceId", spaceId).put("roomId", roomId),
+    )
+    suspend fun startTexas(roomId: String) = texasRequest("game:texas-holdem:start", JSONObject().put("roomId", roomId))
+    suspend fun actTexas(roomId: String, action: String, raiseTo: Long? = null) = texasRequest(
+        "game:texas-holdem:act", JSONObject().put("roomId", roomId).put("action", action).also { if (raiseTo != null) it.put("raiseTo", raiseTo) },
+    )
+    suspend fun leaveTexas(roomId: String) = guarded {
+        client.request("game:texas-holdem:leave", JSONObject().put("roomId", roomId)); mutableState.value = mutableState.value.copy(games = mutableState.value.games.copy(texas = null))
+    }
+    suspend fun closeTexas(roomId: String) = guarded {
+        client.request("game:texas-holdem:close", JSONObject().put("roomId", roomId)); mutableState.value = mutableState.value.copy(games = mutableState.value.games.copy(texas = null))
+    }
+    suspend fun inviteTexas(spaceId: String, roomId: String, targetUserId: String) = guarded {
+        client.request("game:texas-holdem:invite", JSONObject().put("spaceId", spaceId).put("roomId", roomId).put("targetUserId", targetUserId))
+    }
+    fun dismissTexasInvitation() { mutableState.value = mutableState.value.copy(texasInvitation = null) }
+    suspend fun acceptTexasInvitation() {
+        val invitation = mutableState.value.texasInvitation ?: return; selectSpace(invitation.spaceId); enterGameCenter(invitation.spaceId); openTexas(invitation.spaceId, invitation.roomId, true)
+        if (mutableState.value.games.texas?.roomId == invitation.roomId) dismissTexasInvitation()
+    }
+    suspend fun openTexasInvitation(spaceId: String, roomId: String) { selectSpace(spaceId); enterGameCenter(spaceId); openTexas(spaceId, roomId, true) }
+    private suspend fun texasRequest(event: String, payload: JSONObject) = gameRequest(event, payload) { value -> mutableState.value.games.copy(texas = GameJson.texas(value)) }
 
     private suspend fun gomokuRequest(event: String, payload: JSONObject) = gameRequest(event, payload) { value ->
         mutableState.value.games.copy(gomoku = GameJson.gomoku(value))

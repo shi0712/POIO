@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500">
+  <defs><radialGradient id="felt"><stop stop-color="#21594d"/><stop offset="1" stop-color="#071b1c"/></radialGradient><linearGradient id="gold" x2="1" y2="1"><stop stop-color="#ffe5a5"/><stop offset="1" stop-color="#d28a28"/></linearGradient><filter id="shadow"><feDropShadow dx="0" dy="15" stdDeviation="15" flood-opacity=".55"/></filter></defs>
+  <rect width="800" height="500" fill="#090d14"/><ellipse cx="400" cy="270" rx="330" ry="170" fill="url(#felt)" stroke="url(#gold)" stroke-width="12"/><ellipse cx="400" cy="270" rx="267" ry="112" fill="none" stroke="#fff" stroke-opacity=".12" stroke-width="3"/>
+  <g filter="url(#shadow)" transform="translate(280 80) rotate(-10)"><rect width="145" height="205" rx="14" fill="#f8f5ea"/><text x="16" y="40" fill="#e14f66" font-family="Arial" font-size="32" font-weight="900">A</text><text x="20" y="75" fill="#e14f66" font-size="37">♥</text></g>
+  <g filter="url(#shadow)" transform="translate(390 66) rotate(8)"><rect width="145" height="205" rx="14" fill="#f8f5ea"/><text x="16" y="40" fill="#161b24" font-family="Arial" font-size="32" font-weight="900">K</text><text x="20" y="75" fill="#161b24" font-size="37">♠</text></g>
+  <g transform="translate(340 335)"><circle r="39" fill="#7a5cff" stroke="#d9ceff" stroke-width="5"/><text x="0" y="8" text-anchor="middle" fill="white" font-family="Arial" font-size="22" font-weight="900" font-style="italic">P</text></g>
+  <g transform="translate(420 350)"><circle r="39" fill="#efb74f" stroke="#fff0bd" stroke-width="5"/><text x="0" y="8" text-anchor="middle" fill="#33230b" font-family="Arial" font-size="20" font-weight="900">100</text></g>
+</svg>

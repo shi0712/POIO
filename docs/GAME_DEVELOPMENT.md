@@ -23,6 +23,11 @@ apps/server/src/games/
   wheel/
   crash/
   gomoku/
+  texas-holdem/
+    types.ts              持久化牌桌内部状态
+    evaluator.ts          5–7 张牌型评估与比较
+    index.ts              下注轮、边池、结算、超时和筹码托管
+    plugin.ts             房间、动作和邀请事件
 
 apps/desktop/src/games/
   shared/                 通用类型与 GameStage、下注控件等组件
@@ -36,6 +41,7 @@ apps/desktop/src/games/
   wheel/
   crash/
   gomoku/
+  texas-holdem/           德州扑克类型、API、完整牌桌 UI 和清单
 
 apps/android/app/src/main/java/cn/poio/mobile/ui/games/
   shared/Components.kt    通用 Compose 容器与下注控件
@@ -47,6 +53,7 @@ apps/android/app/src/main/java/cn/poio/mobile/ui/games/
   wheel/
   crash/
   gomoku/
+  texasholdem/            德州扑克 Compose 页面与清单
 ```
 
 旧的 `game-plugins/<game>.ts` 文件仅作为兼容转发层保留，新代码必须写入 `games/<game-id>/`。
@@ -59,7 +66,7 @@ apps/android/app/src/main/java/cn/poio/mobile/ui/games/
 | --- | --- | --- |
 | `solo` | 每个用户一份状态，不向社区广播 | Blackjack、Mines、Slots、Wheel |
 | `space` | 同一社区共享实时状态 | Crash |
-| `room` | 创建、加入、观战和解散独立房间 | Gomoku |
+| `room` | 创建、加入、观战和解散独立房间 | Gomoku、Texas Hold'em |
 
 事件必须命名为 `game:<game-id>:<action>`。房间广播使用 `game:<game-id>:state` 和 `game:<game-id>:closed`。
 
@@ -150,6 +157,17 @@ export const examplePlugin = defineGame({
 - `game:<id>:closed`：房间删除，客户端立即移除卡片并清理邀请。
 
 等待中的房主解散时必须在事务中退款并删除持久化数据。断线不应立刻判负；应给玩家短暂重连时间，或提供显式认输规则。
+
+### 复杂牌桌参考：Texas Hold'em
+
+`texas-holdem` 展示了多人、隐藏信息和筹码托管游戏应如何落地：
+
+- 开桌和入桌时通过共享钱包扣除 buy-in，离桌或解散时按剩余 stack 退回；关闭状态会把已退款 stack 清零，防止重复结算。
+- 客户端只能看到自己的 hole cards；观众和其他玩家只收到 `cardsHidden`，摊牌时才公开仍有资格争夺底池的牌。
+- 服务端维护按钮位、大小盲、当前行动者、street bet、total bet、最小加注、行动截止时间和待行动玩家集合。
+- 摊牌按 total bet 分层建立主池与边池，每层只在有资格的玩家间比较；平分后的奇数筹码从庄家左侧开始分配。
+- 操作倒计时写入持久化状态，服务重启时重新挂载计时器；超时默认“可过牌则过牌，否则弃牌”。
+- 每手牌开局只发布 `serverSeedHash`，结束后公开 `serverSeed`；洗牌、发牌、牌型和 payout 均不能由客户端提交。
 
 邀请使用 `GameInvitationEnvelope` 和 `encodeGameInvitation()`：
 

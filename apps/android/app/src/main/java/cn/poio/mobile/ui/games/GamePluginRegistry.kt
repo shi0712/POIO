@@ -7,8 +7,9 @@ import cn.poio.mobile.ui.games.gomoku.GomokuPlugin
 import cn.poio.mobile.ui.games.mines.MinesPlugin
 import cn.poio.mobile.ui.games.slots.SlotsPlugin
 import cn.poio.mobile.ui.games.wheel.WheelPlugin
+import cn.poio.mobile.ui.games.texasholdem.TexasHoldemPlugin
 
-enum class MobileGame { LOBBY, BLACKJACK, MINES, CRASH, SLOTS, WHEEL, GOMOKU }
+enum class MobileGame { LOBBY, BLACKJACK, MINES, CRASH, SLOTS, WHEEL, GOMOKU, TEXAS_HOLDEM }
 data class MobileGamePlugin(val game: MobileGame, val name: String, val detail: String, val art: Int, val color: Color)
 
 object MobileGameRegistry {
@@ -22,5 +23,6 @@ object MobileGameRegistry {
         register(SlotsPlugin)
         register(WheelPlugin)
         register(GomokuPlugin)
+        register(TexasHoldemPlugin)
     }
 }

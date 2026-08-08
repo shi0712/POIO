@@ -2,6 +2,7 @@ name: macOS arm64 DMG
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
