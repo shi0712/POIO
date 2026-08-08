@@ -18,9 +18,14 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -126,7 +131,10 @@ fun GameCenterScreen(
     androidx.compose.runtime.LaunchedEffect(state.gomoku?.roomId) { invitedUntil.clear(); inviteOpen = false }
     androidx.compose.runtime.LaunchedEffect(state.texas?.roomId) { invitedUntil.clear(); inviteOpen = false }
     androidx.compose.runtime.LaunchedEffect(inviteOpen) { while (inviteOpen) { inviteClock = System.currentTimeMillis(); delay(500) } }
-    Column(Modifier.fillMaxSize().background(GameBackground)) {
+    Column(
+        Modifier.fillMaxSize().background(GameBackground)
+            .windowInsetsPadding(WindowInsets.statusBars.union(WindowInsets.navigationBars)),
+    ) {
         GameTopBar(
             balance = state.wallet?.balance ?: 0,
             game = game,

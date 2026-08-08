@@ -115,6 +115,17 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Verify Android update signing certificate
+        run: |
+          set -euo pipefail
+          expected='73ddd8dcd59e12cd5793b239a5b2b238b0567f7fefbcc3f4ac402adb06968101'
+          apksigner_path="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$apksigner_path"
+          actual="$("$apksigner_path" verify --print-certs apps/android/app/build/outputs/apk/debug/app-debug.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+          if [ "$actual" != "$expected" ]; then
+            echo "Android signing certificate mismatch: expected $expected, got ${actual:-missing}" >&2
+            exit 1
+          fi
       - name: Prepare Android release metadata
         env:
           VERSION: ${{ inputs.version }}

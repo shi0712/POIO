@@ -1,8 +1,8 @@
 {
-  "versionCode": 36,
-  "versionName": "1.4.0",
+  "versionCode": 37,
+  "versionName": "1.4.1",
   "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
   "sha256": "PENDING_BUILD",
   "size": 0,
-  "notes": "POIO Android 1.4.0：新增 2–6 人联机德州扑克，支持邀请、观战、断线恢复、完整下注轮、全下、主池与边池；洗牌、发牌和结算均由服务端权威完成。游戏积分仅用于娱乐，不支持充值、提现、转账或兑换。"
+  "notes": "POIO Android 1.4.1：修复进入德州扑克房间闪退和游戏界面遮挡系统状态栏；恢复与历史版本一致的安装签名，可直接覆盖升级。"
 }

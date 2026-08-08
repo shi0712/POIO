@@ -13,9 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Casino
@@ -89,7 +87,7 @@ fun TexasHoldemView(game: TexasGame?, rooms: List<TexasRoom>, spaceId: String, b
         if(me!=null)OutlinedButton({actions.leaveTexas(game.roomId)},Modifier.fillMaxWidth(),enabled=!busy&&game.status!="playing"){Icon(Icons.Default.Logout,null);Text("离桌并结算")}
         if(me?.id==game.hostUserId)OutlinedButton({actions.closeTexas(game.roomId)},Modifier.fillMaxWidth(),enabled=!busy&&game.status!="playing"){Icon(Icons.Default.Close,null,tint=Color(0xFFFF7187));Text("解散牌桌",color=Color(0xFFFF7187))}
     }) {
-        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Felt).border(6.dp,Color(0xFF71491F),RoundedCornerShape(22.dp)).padding(13.dp).verticalScroll(rememberScrollState()),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Felt).border(6.dp,Color(0xFF71491F),RoundedCornerShape(22.dp)).padding(13.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(10.dp)) {
             Text(game.street.uppercase(),color=Color(0xFFB3D0C7),fontSize=9.sp);Row(horizontalArrangement=Arrangement.spacedBy(4.dp)){repeat(5){index->PokerCard(game.community.getOrNull(index))}};Text("底池 ${points(game.pot)}",color=Gold,fontWeight=FontWeight.Black)
             game.players.forEach { player -> PlayerRow(player,player.id==game.currentUserId,player.id==me?.id) }
             if(game.status=="finished")Text(game.winners.joinToString(" · "){winner->"${game.players.firstOrNull{it.id==winner.userId}?.username} ${winner.handName} +${points(winner.amount)}"},Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xDD0B0E14)).padding(12.dp),color=Gold,textAlign=TextAlign.Center,fontWeight=FontWeight.Bold)
