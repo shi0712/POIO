@@ -248,6 +248,15 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      - name: Download deployment bundles for fallback transfer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" --dir /tmp \
+            --pattern "poio-source-$VERSION.tar.gz" \
+            --pattern "poio-web-$VERSION.tar.gz"
       - name: Configure production SSH key
         env:
           POIO_DEPLOY_KEY: ${{ secrets.POIO_DEPLOY_KEY }}
@@ -269,7 +278,14 @@ jobs:
           target="$POIO_SSH_USER@$POIO_SSH_HOST"
           source_url="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/poio-source-$VERSION.tar.gz"
           web_url="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/poio-web-$VERSION.tar.gz"
-          ssh "$target" "curl --fail --location --retry 4 --output '/tmp/poio-source-$VERSION.tar.gz' '$source_url' && curl --fail --location --retry 4 --output '/tmp/poio-web-$VERSION.tar.gz' '$web_url'"
+          remote_source="/tmp/poio-source-$VERSION.tar.gz"
+          remote_web="/tmp/poio-web-$VERSION.tar.gz"
+          if ssh "$target" "test -s '$remote_source' && test -s '$remote_web' && tar -tzf '$remote_source' >/dev/null && tar -xOf '$remote_source' apps/server/src/index.ts | grep -q '$VERSION' && tar -tzf '$remote_web' >/dev/null && tar -xOf '$remote_web' ./index.html | grep -q '<div id=\"root\"></div>'"; then
+            echo "Reusing verified POIO $VERSION deployment bundles already on the server."
+          elif ! ssh "$target" "rm -f '$remote_source.download' '$remote_web.download'; curl --fail --location --connect-timeout 10 --max-time 30 --output '$remote_source.download' '$source_url' && curl --fail --location --connect-timeout 10 --max-time 30 --output '$remote_web.download' '$web_url' && mv '$remote_source.download' '$remote_source' && mv '$remote_web.download' '$remote_web'"; then
+            echo "Server-side CDN download failed; using compressed SSH fallback."
+            scp -C "/tmp/poio-source-$VERSION.tar.gz" "/tmp/poio-web-$VERSION.tar.gz" "$target:/tmp/"
+          fi
           ssh "$target" "bash -s -- '/tmp/poio-source-$VERSION.tar.gz' '/tmp/poio-web-$VERSION.tar.gz' '$VERSION' '$GITHUB_RUN_ID'" < scripts/release/deploy-production.sh
 
   verify:
