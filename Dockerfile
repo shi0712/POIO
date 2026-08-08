@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS build
+FROM node:24.18.0-bookworm-slim AS build
 WORKDIR /app
 RUN sed -i 's|deb.debian.org/debian|mirrors.cloud.tencent.com/debian|g; s|security.debian.org/debian-security|mirrors.cloud.tencent.com/debian-security|g' /etc/apt/sources.list.d/debian.sources
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
@@ -11,7 +11,7 @@ RUN npm ci --workspace @echodeck/server --include-workspace-root=false
 COPY apps/server apps/server
 RUN npm run build --workspace @echodeck/server && npm prune --omit=dev --workspace @echodeck/server
 
-FROM node:24-bookworm-slim
+FROM node:24.18.0-bookworm-slim
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/server/package.json ./apps/server/package.json
