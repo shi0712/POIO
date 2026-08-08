@@ -25,11 +25,14 @@ import type { WheelSpin } from './games/wheel/types';
 import { actTexas, closeTexasRoom, createTexasRoom, inviteTexasMember, joinTexasRoom, leaveTexasRoom, openTexasRoom, startTexasHand } from './games/texas-holdem/api';
 import { TexasHoldemGame, TexasInvitePicker } from './games/texas-holdem/View';
 import type { TexasRoom, TexasState } from './games/texas-holdem/types';
+import { createPoolRoom,invitePoolMember,joinPool,leavePool,openPoolRoom,placePoolCue,rematchPool,resignPool,shootPool } from './games/pool/api';
+import { PoolGame,PoolInvitePicker } from './games/pool/View';
+import type { PoolRoom,PoolState } from './games/pool/types';
 import { formatPoints, formatTime } from './games/shared/components';
 import type { GameInviteMember, GameRound, LedgerEntry, Wallet } from './games/shared/types';
 
 type GameId='lobby'|DesktopGameId;
-type Overview={wallet:Wallet;ledger:LedgerEntry[];history:GameRound[];blackjack?:BlackjackState;mines?:MinesState;slots:{freeSpins:number;freeWager:number};wheel?:WheelSpin;crash?:CrashState;gomokuRooms:GomokuRoom[];texasRooms:TexasRoom[]};
+type Overview={wallet:Wallet;ledger:LedgerEntry[];history:GameRound[];blackjack?:BlackjackState;mines?:MinesState;slots:{freeSpins:number;freeWager:number};wheel?:WheelSpin;crash?:CrashState;gomokuRooms:GomokuRoom[];texasRooms:TexasRoom[];poolRooms:PoolRoom[]};
 
 let audioContext:AudioContext|undefined;
 function playGameSound(kind:'tap'|'win'|'lose'|'spin'|'cash'){
@@ -45,15 +48,16 @@ function playGameSound(kind:'tap'|'win'|'lose'|'spin'|'cash'){
   }catch{}
 }
 
-export default function GameCenter({spaceId,spaceName,onlineMembers,joinRoom,onJoinRoomHandled,onClose,onError}:{spaceId:string;spaceName:string;onlineMembers:GameInviteMember[];joinRoom?:{gameId:'gomoku'|'texas-holdem';roomId:string};onJoinRoomHandled:()=>void;onClose:()=>void;onError:(error:unknown)=>void}){
+export default function GameCenter({spaceId,spaceName,onlineMembers,joinRoom,onJoinRoomHandled,onClose,onError}:{spaceId:string;spaceName:string;onlineMembers:GameInviteMember[];joinRoom?:{gameId:'gomoku'|'texas-holdem'|'pool';roomId:string};onJoinRoomHandled:()=>void;onClose:()=>void;onError:(error:unknown)=>void}){
   const [active,setActive]=useState<GameId>('lobby');const [overview,setOverview]=useState<Overview>();const [loading,setLoading]=useState(true);
   const [historyOpen,setHistoryOpen]=useState(false);const [soundEnabled,setSoundEnabled]=useState(true);
-  const [blackjackBet,setBlackjackBet]=useState(100);const [minesBet,setMinesBet]=useState(100);const [mineCount,setMineCount]=useState(5);const [slotBet,setSlotBet]=useState(100);const [wheelBet,setWheelBet]=useState(100);const [crashBet,setCrashBet]=useState(100);const [gomokuBet,setGomokuBet]=useState(100);
+  const [blackjackBet,setBlackjackBet]=useState(100);const [minesBet,setMinesBet]=useState(100);const [mineCount,setMineCount]=useState(5);const [slotBet,setSlotBet]=useState(100);const [wheelBet,setWheelBet]=useState(100);const [crashBet,setCrashBet]=useState(100);const [gomokuBet,setGomokuBet]=useState(100);const [poolBet,setPoolBet]=useState(100);
   const [busy,setBusy]=useState(false);const [slotSpin,setSlotSpin]=useState<SlotSpin>();const [spinning,setSpinning]=useState(false);const [wheelSpin,setWheelSpin]=useState<WheelSpin>();const [wheelSpinning,setWheelSpinning]=useState(false);const [wheelRotation,setWheelRotation]=useState(0);const [crashTrace,setCrashTrace]=useState<number[]>([1]);
   const [gomoku,setGomoku]=useState<GomokuState>();
   const [gomokuInviteOpen,setGomokuInviteOpen]=useState(false);const [gomokuInviteBusy,setGomokuInviteBusy]=useState('');const [gomokuInvited,setGomokuInvited]=useState<Record<string,number>>({});const [gomokuInviteClock,setGomokuInviteClock]=useState(Date.now());
   const [texas,setTexas]=useState<TexasState>();const [texasSmallBlind,setTexasSmallBlind]=useState(20);const [texasBuyIn,setTexasBuyIn]=useState(1000);const [texasMaxPlayers,setTexasMaxPlayers]=useState(6);
   const [texasInviteOpen,setTexasInviteOpen]=useState(false);const [texasInviteBusy,setTexasInviteBusy]=useState('');const [texasInvited,setTexasInvited]=useState<Record<string,number>>({});const [texasInviteClock,setTexasInviteClock]=useState(Date.now());
+  const [pool,setPool]=useState<PoolState>();const [poolInviteOpen,setPoolInviteOpen]=useState(false);const [poolInviteBusy,setPoolInviteBusy]=useState('');const [poolInvited,setPoolInvited]=useState<Record<string,number>>({});const [poolInviteClock,setPoolInviteClock]=useState(Date.now());
   const crashRound=useRef('');
   const wallet=overview?.wallet;
 
@@ -74,20 +78,23 @@ export default function GameCenter({spaceId,spaceName,onlineMembers,joinRoom,onJ
     const gomokuStateUpdate=(state:GomokuState)=>setGomoku(current=>!current||current.roomId===state.roomId?state:current);
     const gomokuClosed=({roomId}:{roomId:string})=>{setGomoku(current=>current?.roomId===roomId?undefined:current);setOverview(current=>current?{...current,gomokuRooms:current.gomokuRooms.filter(room=>room.roomId!==roomId)}:current)};
     const texasRoomsUpdate=(rooms:TexasRoom[])=>setOverview(current=>current?{...current,texasRooms:rooms}:current);const texasStateUpdate=(state:TexasState)=>setTexas(current=>!current||current.roomId===state.roomId?state:current);const texasClosed=({roomId}:{roomId:string})=>{setTexas(current=>current?.roomId===roomId?undefined:current);setOverview(current=>current?{...current,texasRooms:current.texasRooms.filter(room=>room.roomId!==roomId)}:current)};
-    socket.on('game:wallet',walletUpdate);socket.on('game:crash',crashUpdate);socket.on('game:gomoku:rooms',gomokuRoomsUpdate);socket.on('game:gomoku:state',gomokuStateUpdate);socket.on('game:gomoku:closed',gomokuClosed);socket.on('game:texas-holdem:rooms',texasRoomsUpdate);socket.on('game:texas-holdem:state',texasStateUpdate);socket.on('game:texas-holdem:closed',texasClosed);
-    return()=>{disposed=true;socket.off('game:wallet',walletUpdate);socket.off('game:crash',crashUpdate);socket.off('game:gomoku:rooms',gomokuRoomsUpdate);socket.off('game:gomoku:state',gomokuStateUpdate);socket.off('game:gomoku:closed',gomokuClosed);socket.off('game:texas-holdem:rooms',texasRoomsUpdate);socket.off('game:texas-holdem:state',texasStateUpdate);socket.off('game:texas-holdem:closed',texasClosed);void request('game:leave').catch(()=>{})};
+    const poolRoomsUpdate=(rooms:PoolRoom[])=>setOverview(current=>current?{...current,poolRooms:rooms}:current);const poolStateUpdate=(state:PoolState)=>setPool(current=>!current||current.roomId===state.roomId?state:current);const poolClosed=({roomId}:{roomId:string})=>{setPool(current=>current?.roomId===roomId?undefined:current);setOverview(current=>current?{...current,poolRooms:current.poolRooms.filter(room=>room.roomId!==roomId)}:current)};
+    socket.on('game:wallet',walletUpdate);socket.on('game:crash',crashUpdate);socket.on('game:gomoku:rooms',gomokuRoomsUpdate);socket.on('game:gomoku:state',gomokuStateUpdate);socket.on('game:gomoku:closed',gomokuClosed);socket.on('game:texas-holdem:rooms',texasRoomsUpdate);socket.on('game:texas-holdem:state',texasStateUpdate);socket.on('game:texas-holdem:closed',texasClosed);socket.on('game:pool:rooms',poolRoomsUpdate);socket.on('game:pool:state',poolStateUpdate);socket.on('game:pool:closed',poolClosed);
+    return()=>{disposed=true;socket.off('game:wallet',walletUpdate);socket.off('game:crash',crashUpdate);socket.off('game:gomoku:rooms',gomokuRoomsUpdate);socket.off('game:gomoku:state',gomokuStateUpdate);socket.off('game:gomoku:closed',gomokuClosed);socket.off('game:texas-holdem:rooms',texasRoomsUpdate);socket.off('game:texas-holdem:state',texasStateUpdate);socket.off('game:texas-holdem:closed',texasClosed);socket.off('game:pool:rooms',poolRoomsUpdate);socket.off('game:pool:state',poolStateUpdate);socket.off('game:pool:closed',poolClosed);void request('game:leave').catch(()=>{})};
   },[spaceId]);
 
   useEffect(()=>{setGomokuInvited({});setGomokuInviteOpen(false)},[gomoku?.roomId]);
   useEffect(()=>{if(!gomokuInviteOpen)return;setGomokuInviteClock(Date.now());const timer=window.setInterval(()=>setGomokuInviteClock(Date.now()),500);return()=>window.clearInterval(timer)},[gomokuInviteOpen]);
   useEffect(()=>{setTexasInvited({});setTexasInviteOpen(false)},[texas?.roomId]);
   useEffect(()=>{if(!texasInviteOpen)return;setTexasInviteClock(Date.now());const timer=window.setInterval(()=>setTexasInviteClock(Date.now()),500);return()=>window.clearInterval(timer)},[texasInviteOpen]);
+  useEffect(()=>{setPoolInvited({});setPoolInviteOpen(false)},[pool?.roomId]);
+  useEffect(()=>{if(!poolInviteOpen)return;setPoolInviteClock(Date.now());const timer=window.setInterval(()=>setPoolInviteClock(Date.now()),500);return()=>window.clearInterval(timer)},[poolInviteOpen]);
 
   useEffect(()=>{
     if(!joinRoom)return;
     let disposed=false;setActive(joinRoom.gameId);setBusy(true);
-    const operation=joinRoom.gameId==='gomoku'?joinGomoku(spaceId,joinRoom.roomId):joinTexasRoom(spaceId,joinRoom.roomId);
-    operation.then(state=>{if(!disposed){if(joinRoom.gameId==='gomoku')setGomoku(state as GomokuState);else setTexas(state as TexasState);soundEnabled&&playGameSound('tap')}}).catch(error=>{if(!disposed)onError(error)}).finally(()=>{if(!disposed){setBusy(false);onJoinRoomHandled()}});
+    const operation=joinRoom.gameId==='gomoku'?joinGomoku(spaceId,joinRoom.roomId):joinRoom.gameId==='pool'?joinPool(spaceId,joinRoom.roomId):joinTexasRoom(spaceId,joinRoom.roomId);
+    operation.then(state=>{if(!disposed){if(joinRoom.gameId==='gomoku')setGomoku(state as GomokuState);else if(joinRoom.gameId==='pool')setPool(state as PoolState);else setTexas(state as TexasState);soundEnabled&&playGameSound('tap')}}).catch(error=>{if(!disposed)onError(error)}).finally(()=>{if(!disposed){setBusy(false);onJoinRoomHandled()}});
     return()=>{disposed=true};
   },[joinRoom?.gameId,joinRoom?.roomId,spaceId]);
 
@@ -149,6 +156,7 @@ export default function GameCenter({spaceId,spaceName,onlineMembers,joinRoom,onJ
   const applyTexas=(state:TexasState)=>{setTexas(state);sound(state.status==='finished'&&state.winners.some(winner=>winner.userId===state.players.find(player=>state.me!=='spectator'&&player.seat===state.me.seat)?.id)?'win':'tap')};
   const createTexas=()=>void act(()=>createTexasRoom(spaceId,texasSmallBlind,texasBuyIn,texasMaxPlayers),applyTexas);const openTexas=(room:TexasRoom)=>void act(()=>openTexasRoom(spaceId,room),applyTexas);const startTexas=()=>void act(()=>startTexasHand(texas!.roomId),applyTexas);const texasAction=(action:'fold'|'check'|'call'|'raise'|'all-in',raiseTo?:number)=>void act(()=>actTexas(texas!.roomId,action,raiseTo),applyTexas);const texasLeave=()=>void act(()=>leaveTexasRoom(texas!.roomId),()=>{setTexas(undefined);sound('tap')});const texasClose=()=>void act(()=>closeTexasRoom(texas!.roomId),()=>{setTexas(undefined);sound('tap')});
   const inviteTexas=async(member:GameInviteMember)=>{if(!texas||texasInviteBusy)return;setTexasInviteBusy(member.id);try{const value=await inviteTexasMember(spaceId,texas.roomId,member.id);setTexasInvited(current=>({...current,[member.id]:value.canResendAt}))}catch(error){onError(error)}finally{setTexasInviteBusy('')}};
+  const applyPool=(state:PoolState)=>{setPool(state);sound(state.status==='finished'&&state.winnerId===state.players.find(player=>player.seat===state.meSeat)?.id?'win':'tap')};const createPool=()=>void act(()=>createPoolRoom(spaceId,poolBet),applyPool);const openPool=(room:PoolRoom)=>void act(()=>openPoolRoom(spaceId,room),applyPool);const poolShoot=(angle:number,power:number)=>void act(()=>shootPool(pool!.roomId,angle,power),applyPool);const poolPlace=(x:number,y:number)=>void act(()=>placePoolCue(pool!.roomId,x,y),applyPool);const poolResign=()=>void act(()=>resignPool(pool!.roomId),applyPool);const poolRematch=()=>void act(()=>rematchPool(pool!.roomId),applyPool);const poolLeave=()=>void act(()=>leavePool(pool!.roomId),()=>{setPool(undefined);sound('tap')});const invitePool=async(member:GameInviteMember)=>{if(!pool||poolInviteBusy)return;setPoolInviteBusy(member.id);try{const value=await invitePoolMember(spaceId,pool.roomId,member.id);setPoolInvited(current=>({...current,[member.id]:value.canResendAt}))}catch(error){onError(error)}finally{setPoolInviteBusy('')}};
 
   if(loading)return <section className="game-center game-loading"><div className="game-loader"><i/><i/><i/></div><b>正在进入 POIO 游戏中心</b></section>;
   if(!overview)return <section className="game-center game-loading"><b>游戏中心暂时不可用</b><button onClick={onClose}>返回</button></section>;
@@ -173,10 +181,12 @@ export default function GameCenter({spaceId,spaceName,onlineMembers,joinRoom,onJ
     {active==='wheel'&&<WheelGame spin={wheelSpin} wager={wheelBet} setWager={setWheelBet} rotation={wheelRotation} spinning={wheelSpinning} busy={busy} onSpin={spinWheelGame}/>}
     {active==='gomoku'&&<GomokuGame state={gomoku} rooms={overview.gomokuRooms??[]} wager={gomokuBet} setWager={setGomokuBet} busy={busy} onCreate={createGomoku} onOpen={openGomoku} onMove={gomokuMove} onResign={gomokuResign} onRematch={gomokuRematch} onLeave={gomokuLeave} onInvite={()=>setGomokuInviteOpen(true)}/>}
     {active==='texas-holdem'&&<TexasHoldemGame state={texas} rooms={overview.texasRooms??[]} smallBlind={texasSmallBlind} setSmallBlind={setTexasSmallBlind} buyIn={texasBuyIn} setBuyIn={setTexasBuyIn} maxPlayers={texasMaxPlayers} setMaxPlayers={setTexasMaxPlayers} busy={busy} onCreate={createTexas} onOpen={openTexas} onStart={startTexas} onAction={texasAction} onLeave={texasLeave} onCloseRoom={texasClose} onInvite={()=>setTexasInviteOpen(true)}/>}
+    {active==='pool'&&<PoolGame state={pool} rooms={overview.poolRooms??[]} wager={poolBet} setWager={setPoolBet} busy={busy} onCreate={createPool} onOpen={openPool} onShoot={poolShoot} onPlace={poolPlace} onResign={poolResign} onRematch={poolRematch} onLeave={poolLeave} onInvite={()=>setPoolInviteOpen(true)}/>}
 
     {historyOpen&&<HistoryDrawer ledger={overview.ledger} rounds={overview.history} onClose={()=>setHistoryOpen(false)}/>} 
     {gomokuInviteOpen&&gomoku&&<GomokuInvitePicker members={onlineMembers.filter(member=>!gomoku.players.some(player=>player.id===member.id))} invited={gomokuInvited} now={gomokuInviteClock} busy={gomokuInviteBusy} wager={gomoku.wager} onInvite={member=>void inviteGomoku(member)} onClose={()=>setGomokuInviteOpen(false)}/>}
     {texasInviteOpen&&texas&&<TexasInvitePicker members={onlineMembers.filter(member=>!texas.players.some(player=>player.id===member.id))} invited={texasInvited} now={texasInviteClock} busy={texasInviteBusy} buyIn={texas.buyIn} onInvite={member=>void inviteTexas(member)} onClose={()=>setTexasInviteOpen(false)}/>}
+    {poolInviteOpen&&pool&&<PoolInvitePicker members={onlineMembers.filter(member=>!pool.players.some(player=>player.id===member.id))} invited={poolInvited} now={poolInviteClock} busy={poolInviteBusy} wager={pool.wager} onInvite={member=>void invitePool(member)} onClose={()=>setPoolInviteOpen(false)}/>}
   </section>;
 }
 

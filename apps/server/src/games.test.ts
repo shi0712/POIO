@@ -16,9 +16,10 @@ const plugins=await import('./game-plugins/registry.js');
 test('game plugins register independently with unique manifests',()=>{
   const ids=plugins.gamePlugins.map(plugin=>plugin.manifest.id);
   assert.equal(new Set(ids).size,ids.length);
-  assert.deepEqual(ids.filter(id=>id!=='core').sort(),['blackjack','crash','gomoku','mines','slots','texas-holdem','wheel']);
+  assert.deepEqual(ids.filter(id=>id!=='core').sort(),['blackjack','crash','gomoku','mines','pool','slots','texas-holdem','wheel']);
   assert.equal(plugins.gamePlugins.find(plugin=>plugin.manifest.id==='gomoku')?.manifest.supportsInvites,true);
   assert.equal(plugins.gamePlugins.find(plugin=>plugin.manifest.id==='texas-holdem')?.manifest.supportsInvites,true);
+  assert.equal(plugins.gamePlugins.find(plugin=>plugin.manifest.id==='pool')?.manifest.supportsInvites,true);
 });
 
 test('fair engine is deterministic and game math stays in valid ranges',()=>{
@@ -232,6 +233,19 @@ test('texas plugin authorizes before mutation and invalidates closed-room invita
   assert.throws(()=>handlers.get('game:texas-holdem:close')({roomId:room.roomId},{...context,requireSpace:()=>{throw new Error('不在社区')}}),/不在社区/);assert.equal(games.texasState(room.roomId,owner.id).status,'finished');
   games.closeTexasRoom(room.roomId,owner.id);
   assert.throws(()=>handlers.get('game:texas-holdem:invite')({spaceId:'texas-auth-space',roomId:room.roomId,targetUserId:guest.id},context),/关闭/);
+});
+
+test('pool rooms escrow both wagers, reconnect idempotently and settle a resignation',async()=>{
+  const host=(await database.register(`pool_host_${Date.now()}`,'Pool-test-password')).user;
+  const guest=(await database.register(`pool_guest_${Date.now()}`,'Pool-test-password')).user;
+  const room=games.createPoolRoom('pool-test-space',host.id,200);
+  assert.equal(room.status,'waiting');assert.equal(room.balls.length,16);assert.equal(games.gameWallet(host.id).balance,9_800);
+  let state=games.joinPoolRoom(room.roomId,'pool-test-space',guest.id);
+  assert.equal(state.status,'playing');assert.equal(state.currentUserId,host.id);assert.equal(games.gameWallet(guest.id).balance,9_800);
+  state=games.joinPoolRoom(room.roomId,'pool-test-space',guest.id);assert.equal(state.players.length,2);assert.equal(games.gameWallet(guest.id).balance,9_800);
+  state=games.resignPool(room.roomId,guest.id);assert.equal(state.status,'finished');assert.equal(state.winnerId,host.id);
+  assert.equal(games.gameWallet(host.id).balance,10_200);assert.equal(games.gameWallet(guest.id).balance,9_800);
+  assert.equal((database.db.prepare("SELECT COUNT(*) AS count FROM game_rounds WHERE game='pool'").get() as {count:number}).count,2);
 });
 
 test.after(()=>{

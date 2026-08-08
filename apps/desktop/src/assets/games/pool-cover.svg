@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420">
+  <defs><linearGradient id="felt" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#0b725c"/><stop offset="1" stop-color="#073f39"/></linearGradient><radialGradient id="glow"><stop stop-color="#72ffd5" stop-opacity=".55"/><stop offset="1" stop-color="#35d6a3" stop-opacity="0"/></radialGradient></defs>
+  <rect width="720" height="420" rx="46" fill="#121827"/><ellipse cx="360" cy="210" rx="330" ry="174" fill="#74451f"/><ellipse cx="360" cy="210" rx="312" ry="157" fill="url(#felt)"/>
+  <circle cx="218" cy="210" r="68" fill="url(#glow)"/><circle cx="218" cy="210" r="26" fill="#f5f4ec"/><circle cx="505" cy="210" r="27" fill="#151923"/><text x="505" y="219" fill="#fff" font-family="Arial" font-size="25" text-anchor="middle" font-weight="700">8</text>
+  <circle cx="560" cy="183" r="24" fill="#f8cf3d"/><circle cx="560" cy="237" r="24" fill="#7457ff"/><circle cx="607" cy="210" r="24" fill="#f7f4ea" stroke="#ef4f62" stroke-width="11"/>
+  <path d="M70 328 L330 220" stroke="#d8b98b" stroke-width="10" stroke-linecap="round"/><circle cx="49" cy="337" r="8" fill="#35d6a3"/>
+</svg>

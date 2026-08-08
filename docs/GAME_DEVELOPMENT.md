@@ -28,6 +28,10 @@ apps/server/src/games/
     evaluator.ts          5–7 张牌型评估与比较
     index.ts              下注轮、边池、结算、超时和筹码托管
     plugin.ts             房间、动作和邀请事件
+  pool/
+    physics.ts            服务端球体碰撞、球袋与动画帧计算
+    index.ts              8 球规则、房间、托管积分和结算
+    plugin.ts             球桌、击球、自由球和邀请事件
 
 apps/desktop/src/games/
   shared/                 通用类型与 GameStage、下注控件等组件
@@ -42,6 +46,7 @@ apps/desktop/src/games/
   crash/
   gomoku/
   texas-holdem/           德州扑克类型、API、完整牌桌 UI 和清单
+  pool/                   8 球类型、API、球桌动画与清单
 
 apps/android/app/src/main/java/cn/poio/mobile/ui/games/
   shared/Components.kt    通用 Compose 容器与下注控件
@@ -54,6 +59,7 @@ apps/android/app/src/main/java/cn/poio/mobile/ui/games/
   crash/
   gomoku/
   texasholdem/            德州扑克 Compose 页面与清单
+  pool/                   8 球触控球桌与 Android 清单
 ```
 
 旧的 `game-plugins/<game>.ts` 文件仅作为兼容转发层保留，新代码必须写入 `games/<game-id>/`。

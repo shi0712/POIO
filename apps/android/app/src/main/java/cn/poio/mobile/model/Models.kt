@@ -62,7 +62,7 @@ fun parseDirectGameInvitation(body: String): DirectGameInvitation? {
     if (body.startsWith("[[POIO:GAME:INVITE:1]]|")) return runCatching {
         val encoded = body.substringAfter('|')
         val value = JSONObject(String(android.util.Base64.decode(encoded, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP), Charsets.UTF_8))
-        val gameId=value.optString("gameId");if(gameId!="gomoku"&&gameId!="texas-holdem")return null
+        val gameId=value.optString("gameId");if(gameId!="gomoku"&&gameId!="texas-holdem"&&gameId!="pool")return null
         DirectGameInvitation(gameId,value.getString("spaceId"), value.getString("roomId"), value.optLong("wager"), value.optLong("pot"), value.optLong("expiresAt"),value.optJSONObject("metadata")?.optLong("smallBlind")?:0)
     }.getOrNull()
     val parts = body.split('|')

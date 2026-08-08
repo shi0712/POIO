@@ -392,7 +392,7 @@ private fun HomeScreen(
                 onBack = actions::closeDirectMessage,
                 onSend = actions::sendDirectMessage,
                 onAttach = actions::sendDirectAttachment,
-                onJoinGame = { gameId, spaceId, roomId -> gameOpen = true; if(gameId=="texas-holdem")actions.openTexasInvitation(spaceId,roomId)else actions.openGomokuInvitation(spaceId, roomId) },
+                onJoinGame = { gameId, spaceId, roomId -> gameOpen = true; when(gameId){"texas-holdem"->actions.openTexasInvitation(spaceId,roomId);"pool"->actions.openPoolInvitation(spaceId,roomId);else->actions.openGomokuInvitation(spaceId, roomId)} },
                 modifier = Modifier.padding(padding),
             )
         } else if (!channelOpen) {
@@ -538,6 +538,19 @@ private fun HomeScreen(
             } },
             dismissButton = { TextButton(onClick = actions::dismissTexasInvitation) { Text("稍后") } },
             confirmButton = { Button(onClick = actions::acceptTexasInvitation) { Text("加入牌桌") } },
+        )
+    }
+    state.poolInvitation?.let { invitation ->
+        AlertDialog(
+            onDismissRequest = actions::dismissPoolInvitation,
+            icon = { Icon(Icons.Default.SportsEsports, null, tint = Color(0xFF35D6A3)) },
+            title = { Text("8 球台球邀请", fontWeight = FontWeight.Black) },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text("${invitation.inviter.username} 邀请你加入球桌")
+                Text("每人 ${invitation.wager} 积分 · 奖池 ${invitation.pot}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } },
+            dismissButton = { TextButton(onClick = actions::dismissPoolInvitation) { Text("稍后") } },
+            confirmButton = { Button(onClick = actions::acceptPoolInvitation) { Text("加入球桌") } },
         )
     }
     pendingVoiceJoin?.let { channel ->
@@ -1356,7 +1369,7 @@ private fun DirectMessageCard(message: DirectMessage, own: Boolean, onJoinGame: 
                 Spacer(Modifier.weight(1f))
                 IconButton(
                     onClick = {
-                        val text = if (invitation != null) if(invitation.gameId=="texas-holdem")"德州扑克牌桌邀请" else "五子棋对局邀请" else message.body.takeIf(String::isNotBlank) ?: message.attachmentUrl ?: message.attachmentName.orEmpty()
+                        val text = if (invitation != null) when(invitation.gameId){"texas-holdem"->"德州扑克牌桌邀请";"pool"->"8 球台球邀请";else->"五子棋对局邀请"} else message.body.takeIf(String::isNotBlank) ?: message.attachmentUrl ?: message.attachmentName.orEmpty()
                         context.getSystemService(ClipboardManager::class.java)
                             .setPrimaryClip(ClipData.newPlainText("POIO 私聊", text))
                         Toast.makeText(context, "消息已复制", Toast.LENGTH_SHORT).show()
@@ -1372,9 +1385,9 @@ private fun DirectMessageCard(message: DirectMessage, own: Boolean, onJoinGame: 
                         .clickable(enabled = !expired) { onJoinGame(invitation.gameId, invitation.spaceId, invitation.roomId) }.padding(13.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp),
                 ) {
-                    Icon(if(invitation.gameId=="texas-holdem")Icons.Default.Casino else Icons.Default.SportsEsports, null, Modifier.size(34.dp), tint = if(invitation.gameId=="texas-holdem")Color(0xFFF0B85A)else Color(0xFF9A83FF))
+                    Icon(if(invitation.gameId=="texas-holdem")Icons.Default.Casino else Icons.Default.SportsEsports, null, Modifier.size(34.dp), tint = when(invitation.gameId){"texas-holdem"->Color(0xFFF0B85A);"pool"->Color(0xFF35D6A3);else->Color(0xFF9A83FF)})
                     Column(Modifier.weight(1f)) {
-                        Text(if(invitation.gameId=="texas-holdem"){if(expired)"德州扑克邀请已过期" else if(own)"已发送德州扑克邀请" else "点击加入德州扑克牌桌"}else{if (expired) "五子棋邀请已过期" else if (own) "已发送五子棋邀请" else "点击加入五子棋"}, fontWeight = FontWeight.Black)
+                        Text(when(invitation.gameId){"texas-holdem"->if(expired)"德州扑克邀请已过期" else if(own)"已发送德州扑克邀请" else "点击加入德州扑克牌桌";"pool"->if(expired)"8 球台球邀请已过期" else if(own)"已发送 8 球台球邀请" else "点击加入 8 球台球";else->if(expired)"五子棋邀请已过期" else if(own)"已发送五子棋邀请" else "点击加入五子棋"}, fontWeight = FontWeight.Black)
                         Text(if(invitation.gameId=="texas-holdem")"带入 ${invitation.wager} 积分 · 盲注 ${invitation.smallBlind}/${invitation.smallBlind*2}" else "每人 ${invitation.wager} 积分 · 奖池 ${invitation.pot}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                     }
                 }
