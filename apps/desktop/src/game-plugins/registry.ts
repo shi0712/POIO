@@ -5,5 +5,6 @@ import { minesDesktopPlugin } from '../games/mines/manifest';
 import { slotsDesktopPlugin } from '../games/slots/manifest';
 import { wheelDesktopPlugin } from '../games/wheel/manifest';
 import { texasHoldemDesktopPlugin } from '../games/texas-holdem/manifest';
-export const desktopGames=[blackjackDesktopPlugin,minesDesktopPlugin,crashDesktopPlugin,slotsDesktopPlugin,wheelDesktopPlugin,gomokuDesktopPlugin,texasHoldemDesktopPlugin] as const;
+import { poolDesktopPlugin } from '../games/pool/manifest';
+export const desktopGames=[blackjackDesktopPlugin,minesDesktopPlugin,crashDesktopPlugin,slotsDesktopPlugin,wheelDesktopPlugin,gomokuDesktopPlugin,texasHoldemDesktopPlugin,poolDesktopPlugin] as const;
 export type DesktopGameId=typeof desktopGames[number]['id'];

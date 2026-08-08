@@ -100,6 +100,7 @@ import cn.poio.mobile.ui.games.shared.points
 import cn.poio.mobile.ui.games.slots.SlotsView
 import cn.poio.mobile.ui.games.wheel.WheelView
 import cn.poio.mobile.ui.games.texasholdem.TexasHoldemView
+import cn.poio.mobile.ui.games.pool.PoolView
 import java.text.NumberFormat
 import kotlin.math.ln
 import kotlin.math.max
@@ -130,6 +131,7 @@ fun GameCenterScreen(
     var inviteClock by remember { mutableLongStateOf(System.currentTimeMillis()) }
     androidx.compose.runtime.LaunchedEffect(state.gomoku?.roomId) { invitedUntil.clear(); inviteOpen = false }
     androidx.compose.runtime.LaunchedEffect(state.texas?.roomId) { invitedUntil.clear(); inviteOpen = false }
+    androidx.compose.runtime.LaunchedEffect(state.pool?.roomId) { invitedUntil.clear(); inviteOpen = false }
     androidx.compose.runtime.LaunchedEffect(inviteOpen) { while (inviteOpen) { inviteClock = System.currentTimeMillis(); delay(500) } }
     Column(
         Modifier.fillMaxSize().background(GameBackground)
@@ -156,11 +158,12 @@ fun GameCenterScreen(
             game == MobileGame.SLOTS -> SlotsView(state.slots, state.wallet.freeSpins, wager, busy, { wager = it }, actions)
             game == MobileGame.WHEEL -> WheelView(state.wheel, wager, busy, { wager = it }, actions)
             game == MobileGame.GOMOKU -> GomokuView(state.gomoku, state.gomokuRooms, spaceId, wager, busy, { wager = it }, actions) { inviteGame=MobileGame.GOMOKU;inviteOpen = true }
-            else -> TexasHoldemView(state.texas, state.texasRooms, spaceId, busy, actions) { inviteGame=MobileGame.TEXAS_HOLDEM;inviteOpen = true }
+            game == MobileGame.TEXAS_HOLDEM -> TexasHoldemView(state.texas, state.texasRooms, spaceId, busy, actions) { inviteGame=MobileGame.TEXAS_HOLDEM;inviteOpen = true }
+            else -> PoolView(state.pool,state.poolRooms,spaceId,wager,busy,{wager=it},actions){inviteGame=MobileGame.POOL;inviteOpen=true}
         }
     }
-    val invitePlayerIds=if(inviteGame==MobileGame.TEXAS_HOLDEM)state.texas?.players?.map{it.id}?.toSet() else state.gomoku?.players?.map{it.id}?.toSet()
-    val inviteRoomId=if(inviteGame==MobileGame.TEXAS_HOLDEM)state.texas?.roomId else state.gomoku?.roomId
+    val invitePlayerIds=when(inviteGame){MobileGame.TEXAS_HOLDEM->state.texas?.players?.map{it.id}?.toSet();MobileGame.POOL->state.pool?.players?.map{it.id}?.toSet();else->state.gomoku?.players?.map{it.id}?.toSet()}
+    val inviteRoomId=when(inviteGame){MobileGame.TEXAS_HOLDEM->state.texas?.roomId;MobileGame.POOL->state.pool?.roomId;else->state.gomoku?.roomId}
     if (inviteOpen && invitePlayerIds != null && inviteRoomId != null) AlertDialog(
         onDismissRequest = { inviteOpen = false },
         title = { Text("邀请在线成员", fontWeight = FontWeight.Black) },
@@ -169,7 +172,7 @@ fun GameCenterScreen(
             if (available.isEmpty()) item { Text("暂时没有可邀请的在线成员", color = Color(0xFF8B8E9C)) }
             items(available, key = User::id) { member -> val remaining=((invitedUntil[member.id]?:0L)-inviteClock).coerceAtLeast(0); Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = .04f)).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(member.username, Modifier.weight(1f), fontWeight = FontWeight.Bold)
-                Button(enabled=remaining<=0,onClick = { if(inviteGame==MobileGame.TEXAS_HOLDEM)actions.inviteTexas(spaceId,inviteRoomId,member.id)else actions.inviteGomoku(spaceId,inviteRoomId,member.id); invitedUntil[member.id]=System.currentTimeMillis()+5_000 }) { Icon(Icons.Default.PersonAdd, null); Spacer(Modifier.width(5.dp)); Text(if(remaining>0)"已邀请 ${kotlin.math.ceil(remaining/1000.0).toInt()}s" else if(invitedUntil.containsKey(member.id))"重新邀请" else "邀请") }
+                Button(enabled=remaining<=0,onClick = { when(inviteGame){MobileGame.TEXAS_HOLDEM->actions.inviteTexas(spaceId,inviteRoomId,member.id);MobileGame.POOL->actions.invitePool(spaceId,inviteRoomId,member.id);else->actions.inviteGomoku(spaceId,inviteRoomId,member.id)}; invitedUntil[member.id]=System.currentTimeMillis()+5_000 }) { Icon(Icons.Default.PersonAdd, null); Spacer(Modifier.width(5.dp)); Text(if(remaining>0)"已邀请 ${kotlin.math.ceil(remaining/1000.0).toInt()}s" else if(invitedUntil.containsKey(member.id))"重新邀请" else "邀请") }
             } }
         } },
         confirmButton = { TextButton(onClick = { inviteOpen = false }) { Text("完成") } },

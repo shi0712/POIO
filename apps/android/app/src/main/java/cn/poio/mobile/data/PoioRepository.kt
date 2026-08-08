@@ -13,6 +13,7 @@ import cn.poio.mobile.model.GameCenterState
 import cn.poio.mobile.model.GameJson
 import cn.poio.mobile.model.GomokuInvitation
 import cn.poio.mobile.model.TexasInvitation
+import cn.poio.mobile.model.PoolInvitation
 import cn.poio.mobile.model.PoioJson
 import cn.poio.mobile.model.ServerCapabilities
 import cn.poio.mobile.model.Space
@@ -64,6 +65,7 @@ data class PoioState(
     val games: GameCenterState = GameCenterState(),
     val gomokuInvitation: GomokuInvitation? = null,
     val texasInvitation: TexasInvitation? = null,
+    val poolInvitation: PoolInvitation? = null,
     val inviteCode: String? = null,
     /** Increments only after this Socket.IO connection has authenticated. */
     val authenticatedConnectionGeneration: Long = 0,
@@ -252,6 +254,23 @@ class PoioRepository(
                 delay((invitation.expiresAt - System.currentTimeMillis()).coerceAtLeast(0))
                 if (mutableState.value.texasInvitation?.roomId == invitation.roomId) mutableState.value = mutableState.value.copy(texasInvitation = null)
             }
+        }
+        client.on("game:pool:rooms") { args ->
+            val value=args.firstOrNull() as? org.json.JSONArray?:return@on
+            mutableState.value=mutableState.value.copy(games=mutableState.value.games.copy(poolRooms=GameJson.poolRooms(value)))
+        }
+        client.on("game:pool:state") { args ->
+            val value=args.firstOrNull() as? JSONObject?:return@on
+            mutableState.value=mutableState.value.copy(games=mutableState.value.games.copy(pool=GameJson.pool(value)))
+        }
+        client.on("game:pool:closed") { args ->
+            val roomId=(args.firstOrNull() as? JSONObject)?.optString("roomId")?:return@on;val games=mutableState.value.games
+            mutableState.value=mutableState.value.copy(games=games.copy(pool=games.pool?.takeUnless{it.roomId==roomId},poolRooms=games.poolRooms.filterNot{it.roomId==roomId}),poolInvitation=mutableState.value.poolInvitation?.takeUnless{it.roomId==roomId})
+        }
+        client.on("game:pool:invited") { args ->
+            val invitation=runCatching{GameJson.poolInvitation(args.firstOrNull() as JSONObject)}.getOrNull()?:return@on
+            if(invitation.expiresAt<=System.currentTimeMillis())return@on;mutableState.value=mutableState.value.copy(poolInvitation=invitation)
+            scope.launch{delay((invitation.expiresAt-System.currentTimeMillis()).coerceAtLeast(0));if(mutableState.value.poolInvitation?.roomId==invitation.roomId)mutableState.value=mutableState.value.copy(poolInvitation=null)}
         }
         client.connect(
             onConnected = {
@@ -506,6 +525,7 @@ class PoioRepository(
                     crash = GameJson.crash(value.optJSONObject("crash")),
                     gomokuRooms = GameJson.gomokuRooms(value.optJSONArray("gomokuRooms")),
                     texasRooms = GameJson.texasRooms(value.optJSONArray("texasRooms")),
+                    poolRooms = GameJson.poolRooms(value.optJSONArray("poolRooms")),
                 ),
             )
         }
@@ -633,6 +653,19 @@ class PoioRepository(
     }
     suspend fun openTexasInvitation(spaceId: String, roomId: String) { selectSpace(spaceId); enterGameCenter(spaceId); openTexas(spaceId, roomId, true) }
     private suspend fun texasRequest(event: String, payload: JSONObject) = gameRequest(event, payload) { value -> mutableState.value.games.copy(texas = GameJson.texas(value)) }
+
+    suspend fun createPool(spaceId:String,wager:Long)=poolRequest("game:pool:create",JSONObject().put("spaceId",spaceId).put("wager",wager))
+    suspend fun openPool(spaceId:String,roomId:String,join:Boolean)=poolRequest(if(join)"game:pool:join" else "game:pool:watch",JSONObject().put("spaceId",spaceId).put("roomId",roomId))
+    suspend fun shootPool(roomId:String,angle:Double,power:Double)=poolRequest("game:pool:shoot",JSONObject().put("roomId",roomId).put("angle",angle).put("power",power))
+    suspend fun placePool(roomId:String,x:Double,y:Double)=poolRequest("game:pool:place",JSONObject().put("roomId",roomId).put("x",x).put("y",y))
+    suspend fun resignPool(roomId:String)=poolRequest("game:pool:resign",JSONObject().put("roomId",roomId))
+    suspend fun rematchPool(roomId:String)=poolRequest("game:pool:rematch",JSONObject().put("roomId",roomId))
+    suspend fun leavePool(roomId:String)=guarded{client.request("game:pool:leave",JSONObject().put("roomId",roomId));mutableState.value=mutableState.value.copy(games=mutableState.value.games.copy(pool=null))}
+    suspend fun invitePool(spaceId:String,roomId:String,targetUserId:String)=guarded{client.request("game:pool:invite",JSONObject().put("spaceId",spaceId).put("roomId",roomId).put("targetUserId",targetUserId))}
+    fun dismissPoolInvitation(){mutableState.value=mutableState.value.copy(poolInvitation=null)}
+    suspend fun acceptPoolInvitation(){val invitation=mutableState.value.poolInvitation?:return;selectSpace(invitation.spaceId);enterGameCenter(invitation.spaceId);openPool(invitation.spaceId,invitation.roomId,true);if(mutableState.value.games.pool?.roomId==invitation.roomId)dismissPoolInvitation()}
+    suspend fun openPoolInvitation(spaceId:String,roomId:String){selectSpace(spaceId);enterGameCenter(spaceId);openPool(spaceId,roomId,true)}
+    private suspend fun poolRequest(event:String,payload:JSONObject)=gameRequest(event,payload){value->mutableState.value.games.copy(pool=GameJson.pool(value))}
 
     private suspend fun gomokuRequest(event: String, payload: JSONObject) = gameRequest(event, payload) { value ->
         mutableState.value.games.copy(gomoku = GameJson.gomoku(value))

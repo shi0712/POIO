@@ -7,8 +7,9 @@ import type { GamePlugin } from './sdk.js';
 import { slotsPlugin } from '../games/slots/plugin.js';
 import { wheelPlugin } from '../games/wheel/plugin.js';
 import { texasHoldemPlugin } from '../games/texas-holdem/plugin.js';
+import { poolPlugin } from '../games/pool/plugin.js';
 
-export const gamePlugins:GamePlugin[]=[coreGamePlugin,blackjackPlugin,minesPlugin,crashPlugin,slotsPlugin,wheelPlugin,gomokuPlugin,texasHoldemPlugin];
+export const gamePlugins:GamePlugin[]=[coreGamePlugin,blackjackPlugin,minesPlugin,crashPlugin,slotsPlugin,wheelPlugin,gomokuPlugin,texasHoldemPlugin,poolPlugin];
 
 export function registerGamePlugins(host:Parameters<GamePlugin['register']>[0]){
   const ids=new Set<string>();

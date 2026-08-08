@@ -1,8 +1,8 @@
 {
-  "versionCode": 37,
-  "versionName": "1.4.1",
+  "versionCode": 38,
+  "versionName": "1.4.2",
   "url": "https://www.modelscope.cn/models/sjw712/POIO/resolve/master/POIO-Android-latest-arm64.apk",
   "sha256": "PENDING_BUILD",
   "size": 0,
-  "notes": "POIO Android 1.4.1：修复进入德州扑克房间闪退和游戏界面遮挡系统状态栏；恢复与历史版本一致的安装签名，可直接覆盖升级。"
+  "notes": "POIO Android 1.4.2：新增双人 8 球台球，支持触控瞄准、力度调节、自由球、观战、邀请和积分对局。"
 }

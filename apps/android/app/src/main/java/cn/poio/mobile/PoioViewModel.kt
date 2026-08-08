@@ -162,6 +162,17 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
     override fun acceptTexasInvitation() { viewModelScope.launch { repository.acceptTexasInvitation() } }
     override fun dismissTexasInvitation() = repository.dismissTexasInvitation()
     override fun openTexasInvitation(spaceId: String, roomId: String) { viewModelScope.launch { repository.openTexasInvitation(spaceId, roomId) } }
+    override fun createPool(spaceId:String,wager:Long){viewModelScope.launch{repository.createPool(spaceId,wager)}}
+    override fun openPool(spaceId:String,roomId:String,join:Boolean){viewModelScope.launch{repository.openPool(spaceId,roomId,join)}}
+    override fun shootPool(roomId:String,angle:Double,power:Double){viewModelScope.launch{repository.shootPool(roomId,angle,power)}}
+    override fun placePool(roomId:String,x:Double,y:Double){viewModelScope.launch{repository.placePool(roomId,x,y)}}
+    override fun resignPool(roomId:String){viewModelScope.launch{repository.resignPool(roomId)}}
+    override fun rematchPool(roomId:String){viewModelScope.launch{repository.rematchPool(roomId)}}
+    override fun leavePool(roomId:String){viewModelScope.launch{repository.leavePool(roomId)}}
+    override fun invitePool(spaceId:String,roomId:String,targetUserId:String){viewModelScope.launch{repository.invitePool(spaceId,roomId,targetUserId)}}
+    override fun acceptPoolInvitation(){viewModelScope.launch{repository.acceptPoolInvitation()}}
+    override fun dismissPoolInvitation()=repository.dismissPoolInvitation()
+    override fun openPoolInvitation(spaceId:String,roomId:String){viewModelScope.launch{repository.openPoolInvitation(spaceId,roomId)}}
     override fun joinVoice(channelId: String) {
         viewModelScope.launch {
             runCatching {
@@ -372,6 +383,17 @@ interface PoioActions {
     fun acceptTexasInvitation()
     fun dismissTexasInvitation()
     fun openTexasInvitation(spaceId: String, roomId: String)
+    fun createPool(spaceId:String,wager:Long)
+    fun openPool(spaceId:String,roomId:String,join:Boolean)
+    fun shootPool(roomId:String,angle:Double,power:Double)
+    fun placePool(roomId:String,x:Double,y:Double)
+    fun resignPool(roomId:String)
+    fun rematchPool(roomId:String)
+    fun leavePool(roomId:String)
+    fun invitePool(spaceId:String,roomId:String,targetUserId:String)
+    fun acceptPoolInvitation()
+    fun dismissPoolInvitation()
+    fun openPoolInvitation(spaceId:String,roomId:String)
     fun joinVoice(channelId: String)
     fun leaveVoice()
     fun setMuted(muted: Boolean)

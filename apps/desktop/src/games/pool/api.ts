@@ -1,0 +1,11 @@
+import { request } from '../../api';
+import type { PoolRoom,PoolState } from './types';
+export const createPoolRoom=(spaceId:string,wager:number)=>request<PoolState>('game:pool:create',{spaceId,wager});
+export const joinPool=(spaceId:string,roomId:string)=>request<PoolState>('game:pool:join',{spaceId,roomId});
+export const openPoolRoom=(spaceId:string,room:PoolRoom)=>request<PoolState>(room.isMine||room.status==='waiting'?'game:pool:join':'game:pool:watch',{spaceId,roomId:room.roomId});
+export const shootPool=(roomId:string,angle:number,power:number)=>request<PoolState>('game:pool:shoot',{roomId,angle,power});
+export const placePoolCue=(roomId:string,x:number,y:number)=>request<PoolState>('game:pool:place',{roomId,x,y});
+export const resignPool=(roomId:string)=>request<PoolState>('game:pool:resign',{roomId});
+export const rematchPool=(roomId:string)=>request<PoolState>('game:pool:rematch',{roomId});
+export const leavePool=(roomId:string)=>request('game:pool:leave',{roomId});
+export const invitePoolMember=(spaceId:string,roomId:string,targetUserId:string)=>request<{canResendAt:number}>('game:pool:invite',{spaceId,roomId,targetUserId});

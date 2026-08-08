@@ -165,6 +165,13 @@ data class TexasInvitation(
     val inviter: User, val expiresAt: Long,
 )
 
+data class PoolPlayer(val id:String,val username:String,val avatarUrl:String?=null,val seat:Int,val group:String?=null)
+data class PoolBall(val number:Int,val x:Float,val y:Float,val pocketed:Boolean)
+data class PoolShot(val id:String,val shooterId:String,val frames:List<List<PoolBall>>,val pocketed:List<Int>,val foul:Boolean,val message:String)
+data class PoolRoom(val roomId:String,val status:String,val wager:Long,val pot:Long,val players:List<PoolPlayer>,val roundNumber:Int,val winnerId:String?=null,val updatedAt:Long,val isMine:Boolean)
+data class PoolGame(val roomId:String,val spaceId:String,val wager:Long,val pot:Long,val status:String,val players:List<PoolPlayer>,val balls:List<PoolBall>,val currentUserId:String?=null,val ballInHand:Boolean,val openTable:Boolean,val breakShot:Boolean,val shotNumber:Int,val lastShot:PoolShot?=null,val winnerId:String?=null,val result:String?=null,val roundNumber:Int,val rematchVotes:List<String>,val meSeat:Int?=null,val canShoot:Boolean,val canPlace:Boolean)
+data class PoolInvitation(val spaceId:String,val roomId:String,val wager:Long,val pot:Long,val inviter:User,val expiresAt:Long)
+
 data class GameCenterState(
     val loading: Boolean = false,
     val open: Boolean = false,
@@ -178,6 +185,8 @@ data class GameCenterState(
     val gomoku: GomokuGame? = null,
     val texasRooms: List<TexasRoom> = emptyList(),
     val texas: TexasGame? = null,
+    val poolRooms: List<PoolRoom> = emptyList(),
+    val pool: PoolGame? = null,
 )
 
 object GameJson {
@@ -191,6 +200,7 @@ object GameJson {
         buyIn = value.optLong("buyIn"), smallBlind = value.optLong("smallBlind"),
         inviter = PoioJson.user(value.getJSONObject("inviter")), expiresAt = value.optLong("expiresAt"),
     )
+    fun poolInvitation(value:JSONObject)=PoolInvitation(value.optString("spaceId"),value.optString("roomId"),value.optLong("wager"),value.optLong("pot"),PoioJson.user(value.getJSONObject("inviter")),value.optLong("expiresAt"))
     fun wallet(value: JSONObject) = GameWallet(
         balance = value.optLong("balance"),
         lastDaily = value.optLong("lastDaily"),
@@ -348,5 +358,13 @@ object GameJson {
             spectator = me !is JSONObject, canAct = it.optBoolean("canAct"), toCall = it.optLong("toCall"),
             minRaiseTo = it.optLong("minRaiseTo"), canStart = it.optBoolean("canStart"), proof = it.optJSONObject("proof")?.let(::proof),
         )
+    }
+
+    private fun poolPlayer(value:JSONObject)=PoolPlayer(value.optString("id"),value.optString("username"),value.optString("avatarUrl").takeIf(String::isNotBlank),value.optInt("seat"),value.optString("group").takeIf(String::isNotBlank))
+    private fun poolBall(value:JSONObject)=PoolBall(value.optInt("number"),value.optDouble("x").toFloat(),value.optDouble("y").toFloat(),value.optBoolean("pocketed"))
+    fun poolRooms(value:org.json.JSONArray?)=value.objects().map { PoolRoom(it.optString("roomId"),it.optString("status"),it.optLong("wager"),it.optLong("pot"),it.optJSONArray("players").objects().map(::poolPlayer),it.optInt("roundNumber",1),it.optString("winnerId").takeIf(String::isNotBlank),it.optLong("updatedAt"),it.optBoolean("isMine")) }
+    fun pool(value:JSONObject?)=value?.let { json ->
+        val shot=json.optJSONObject("lastShot")?.let { shot -> PoolShot(shot.optString("id"),shot.optString("shooterId"),shot.optJSONArray("frames").objects().map{frame->frame.optJSONArray("balls").objects().map(::poolBall)},ints(shot.optJSONArray("pocketed")),shot.optBoolean("foul"),shot.optString("message")) }
+        PoolGame(json.optString("roomId"),json.optString("spaceId"),json.optLong("wager"),json.optLong("pot"),json.optString("status"),json.optJSONArray("players").objects().map(::poolPlayer),json.optJSONArray("balls").objects().map(::poolBall),json.optString("currentUserId").takeIf(String::isNotBlank),json.optBoolean("ballInHand"),json.optBoolean("openTable"),json.optBoolean("breakShot"),json.optInt("shotNumber"),shot,json.optString("winnerId").takeIf(String::isNotBlank),json.optString("result").takeIf(String::isNotBlank),json.optInt("roundNumber",1),buildList{val votes=json.optJSONArray("rematchVotes");if(votes!=null)for(index in 0 until votes.length())add(votes.optString(index))},json.takeIf{it.has("meSeat")&&!it.isNull("meSeat")}?.optInt("meSeat"),json.optBoolean("canShoot"),json.optBoolean("canPlace"))
     }
 }
