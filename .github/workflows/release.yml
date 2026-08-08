@@ -39,6 +39,7 @@ jobs:
           test "$(node -p "require('./apps/desktop/package.json').version")" = "$VERSION"
           grep -q "versionName = \"$VERSION\"" apps/android/app/build.gradle.kts
           grep -q "version: '$VERSION'" apps/server/src/index.ts
+          grep -q "image: poio/server:$VERSION" docker-compose.yml
           test -f "docs/release-notes/v$VERSION.md"
       - run: npm test
       - run: npm run build
