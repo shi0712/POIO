@@ -161,14 +161,28 @@ jobs:
         with:
           name: POIO-mac-arm64-unsigned
           path: artifacts/macos
+      - uses: actions/download-artifact@v7
+        with:
+          name: POIO-web
+          path: artifacts/web
+      - name: Prepare production deployment bundles
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/deploy
+          cp artifacts/android/android-update.json deploy/download/android-update.json
+          tar -czf "artifacts/deploy/poio-source-$VERSION.tar.gz" \
+            package.json package-lock.json Dockerfile docker-compose.yml vendor/mediasoup-worker apps/server deploy/download
+          tar -czf "artifacts/deploy/poio-web-$VERSION.tar.gz" -C artifacts/web .
       - name: Create or replace GitHub Release assets
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          mapfile -t assets < <(find artifacts -type f \( -name '*.exe' -o -name '*.blockmap' -o -name '*.apk' -o -name '*.dmg' -o -name '*.zip' -o -name 'latest.yml' -o -name 'latest-mac.yml' -o -name 'android-update.json' \) -print | sort)
-          test "${#assets[@]}" -ge 8
+          mapfile -t assets < <(find artifacts -type f \( -name '*.exe' -o -name '*.blockmap' -o -name '*.apk' -o -name '*.dmg' -o -name '*.zip' -o -name 'latest.yml' -o -name 'latest-mac.yml' -o -name 'android-update.json' -o -name 'poio-source-*.tar.gz' -o -name 'poio-web-*.tar.gz' \) -print | sort)
+          test "${#assets[@]}" -ge 10
           if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "v$VERSION" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
@@ -234,23 +248,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v7
-        with:
-          name: POIO-web
-          path: artifacts/web
-      - uses: actions/download-artifact@v7
-        with:
-          name: POIO-android
-          path: artifacts/android
-      - name: Prepare deployment archives
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          cp artifacts/android/android-update.json deploy/download/android-update.json
-          tar -czf "/tmp/poio-source-$VERSION.tar.gz" \
-            package.json package-lock.json Dockerfile docker-compose.yml vendor/mediasoup-worker apps/server deploy/download
-          tar -czf "/tmp/poio-web-$VERSION.tar.gz" -C artifacts/web .
       - name: Configure production SSH key
         env:
           POIO_DEPLOY_KEY: ${{ secrets.POIO_DEPLOY_KEY }}
@@ -270,7 +267,9 @@ jobs:
         run: |
           set -euo pipefail
           target="$POIO_SSH_USER@$POIO_SSH_HOST"
-          scp "/tmp/poio-source-$VERSION.tar.gz" "/tmp/poio-web-$VERSION.tar.gz" "$target:/tmp/"
+          source_url="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/poio-source-$VERSION.tar.gz"
+          web_url="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/poio-web-$VERSION.tar.gz"
+          ssh "$target" "curl --fail --location --retry 4 --output '/tmp/poio-source-$VERSION.tar.gz' '$source_url' && curl --fail --location --retry 4 --output '/tmp/poio-web-$VERSION.tar.gz' '$web_url'"
           ssh "$target" "bash -s -- '/tmp/poio-source-$VERSION.tar.gz' '/tmp/poio-web-$VERSION.tar.gz' '$VERSION' '$GITHUB_RUN_ID'" < scripts/release/deploy-production.sh
 
   verify:

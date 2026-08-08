@@ -50,8 +50,8 @@ rollback() {
   set +e
   echo "Deployment failed; restoring the previous POIO release." >&2
   sudo docker compose -f "$base/docker-compose.yml" stop server
-  rm -rf "$base/apps/server" "$base/deploy/download"
-  tar -xzf "$backup/source.tgz" -C "$base"
+  sudo rm -rf "$base/apps/server" "$base/deploy/download"
+  sudo tar -xzf "$backup/source.tgz" -C "$base"
   sudo docker tag "$previous_image" "$(awk '/image: poio\/server:/{print $2; exit}' "$base/docker-compose.yml")"
   sudo docker compose -f "$base/docker-compose.yml" up -d --no-deps server
   if [[ -f "$backup/web.tgz" ]]; then
@@ -70,10 +70,10 @@ for suffix in -wal -shm; do
   fi
 done
 
-rm -rf "$base/apps/server" "$base/deploy/download"
-cp -a "$incoming/source/apps/server" "$base/apps/server"
-cp -a "$incoming/source/deploy/download" "$base/deploy/download"
-cp -a "$incoming/source/package.json" "$incoming/source/package-lock.json" \
+sudo rm -rf "$base/apps/server" "$base/deploy/download"
+sudo cp -a "$incoming/source/apps/server" "$base/apps/server"
+sudo cp -a "$incoming/source/deploy/download" "$base/deploy/download"
+sudo cp -a "$incoming/source/package.json" "$incoming/source/package-lock.json" \
   "$incoming/source/Dockerfile" "$incoming/source/docker-compose.yml" "$base/"
 
 sudo docker tag "$candidate_image" "$stable_image"

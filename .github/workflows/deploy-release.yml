@@ -1,0 +1,76 @@
+name: Deploy an existing POIO release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: POIO version without the v prefix
+        required: true
+        type: string
+      source_run_id:
+        description: Successful Release POIO run containing web and Android artifacts
+        required: true
+        type: string
+
+concurrency:
+  group: poio-production-release
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download verified build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/web artifacts/android
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name POIO-web --dir artifacts/web
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name POIO-android --dir artifacts/android
+          test -f artifacts/web/index.html
+          test -f artifacts/android/android-update.json
+      - name: Publish deployment bundles to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          cp artifacts/android/android-update.json deploy/download/android-update.json
+          tar -czf "/tmp/poio-source-$VERSION.tar.gz" \
+            package.json package-lock.json Dockerfile docker-compose.yml vendor/mediasoup-worker apps/server deploy/download
+          tar -czf "/tmp/poio-web-$VERSION.tar.gz" -C artifacts/web .
+          gh release upload "v$VERSION" "/tmp/poio-source-$VERSION.tar.gz" "/tmp/poio-web-$VERSION.tar.gz" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Configure production SSH key
+        env:
+          POIO_DEPLOY_KEY: ${{ secrets.POIO_DEPLOY_KEY }}
+          POIO_SSH_HOST: ${{ secrets.POIO_SSH_HOST }}
+        run: |
+          set -euo pipefail
+          test -n "$POIO_DEPLOY_KEY"; test -n "$POIO_SSH_HOST"
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$POIO_DEPLOY_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          ssh-keyscan -H "$POIO_SSH_HOST" >> "$HOME/.ssh/known_hosts"
+      - name: Deploy and verify POIO
+        env:
+          VERSION: ${{ inputs.version }}
+          POIO_SSH_HOST: ${{ secrets.POIO_SSH_HOST }}
+          POIO_SSH_USER: ${{ secrets.POIO_SSH_USER }}
+        run: |
+          set -euo pipefail
+          target="$POIO_SSH_USER@$POIO_SSH_HOST"
+          source_url="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/poio-source-$VERSION.tar.gz"
+          web_url="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/poio-web-$VERSION.tar.gz"
+          ssh "$target" "curl --fail --location --retry 4 --output '/tmp/poio-source-$VERSION.tar.gz' '$source_url' && curl --fail --location --retry 4 --output '/tmp/poio-web-$VERSION.tar.gz' '$web_url'"
+          ssh "$target" "bash -s -- '/tmp/poio-source-$VERSION.tar.gz' '/tmp/poio-web-$VERSION.tar.gz' '$VERSION' '$GITHUB_RUN_ID'" < scripts/release/deploy-production.sh
+          curl --fail --silent --show-error --insecure https://115.159.222.29/poio/health | grep -q "\"version\":\"$VERSION\""
+          curl --fail --silent --show-error --insecure https://115.159.222.29/poio/web/ | grep -q '<div id="root"></div>'
