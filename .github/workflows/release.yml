@@ -107,9 +107,15 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$ANDROID_DEBUG_KEYSTORE_BASE64"
-          mkdir -p "$HOME/.android"
-          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
-          chmod 600 "$HOME/.android/debug.keystore"
+          expected='73ddd8dcd59e12cd5793b239a5b2b238b0567f7fefbcc3f4ac402adb06968101'
+          keystore_path="$RUNNER_TEMP/poio-android-debug.keystore"
+          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+          chmod 600 "$keystore_path"
+          keytool_output="$(keytool -list -v -keystore "$keystore_path" -storepass android -alias androiddebugkey -J-Duser.language=en 2>&1)"
+          actual="$(printf '%s\n' "$keytool_output" | sed -n 's/.*SHA256:[[:space:]]*//p' | head -n 1 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          echo "Decoded Android keystore certificate SHA-256: ${actual:-missing}"
+          test "$actual" = "$expected"
+          echo "POIO_ANDROID_KEYSTORE_FILE=$keystore_path" >> "$GITHUB_ENV"
       - name: Build signed Android APK
         working-directory: apps/android
         run: |
@@ -123,7 +129,7 @@ jobs:
           test -x "$apksigner_path"
           certificate_output="$("$apksigner_path" verify --print-certs apps/android/app/build/outputs/apk/debug/app-debug.apk 2>&1)"
           printf '%s\n' "$certificate_output"
-          actual="$(printf '%s\n' "$certificate_output" | sed -n 's/.*Signer #1 certificate SHA-256 digest:[[:space:]]*//p' | head -n 1 | tr '[:upper:]' '[:lower:]')"
+          actual="$(printf '%s\n' "$certificate_output" | sed -n 's/.*certificate SHA-256 digest:[[:space:]]*//p' | head -n 1 | tr '[:upper:]' '[:lower:]')"
           if [ "$actual" != "$expected" ]; then
             echo "Android signing certificate mismatch: expected $expected, got ${actual:-missing}" >&2
             exit 1
