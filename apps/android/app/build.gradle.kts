@@ -8,6 +8,17 @@ android {
     compileSdk = 36
     ndkVersion = "28.2.13676358"
 
+    signingConfigs {
+        getByName("debug") {
+            System.getenv("POIO_ANDROID_KEYSTORE_FILE")?.takeIf(String::isNotBlank)?.let { path ->
+                storeFile = file(path)
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "cn.poio.mobile"
         minSdk = 26
