@@ -1,0 +1,11 @@
+import { request } from '../../api';
+import type { TexasRoom, TexasState } from './types';
+export const createTexasRoom=(spaceId:string,smallBlind:number,buyIn:number,maxPlayers:number)=>request<TexasState>('game:texas-holdem:create',{spaceId,smallBlind,buyIn,maxPlayers});
+export const openTexasRoom=(spaceId:string,room:TexasRoom)=>request<TexasState>(room.isMine||room.status!=='playing'?'game:texas-holdem:join':'game:texas-holdem:watch',{spaceId,roomId:room.roomId});
+export const joinTexasRoom=(spaceId:string,roomId:string)=>request<TexasState>('game:texas-holdem:join',{spaceId,roomId});
+export const watchTexasRoom=(spaceId:string,roomId:string)=>request<TexasState>('game:texas-holdem:watch',{spaceId,roomId});
+export const startTexasHand=(roomId:string)=>request<TexasState>('game:texas-holdem:start',{roomId});
+export const actTexas=(roomId:string,action:'fold'|'check'|'call'|'raise'|'all-in',raiseTo?:number)=>request<TexasState>('game:texas-holdem:act',{roomId,action,raiseTo});
+export const leaveTexasRoom=(roomId:string)=>request('game:texas-holdem:leave',{roomId});
+export const closeTexasRoom=(roomId:string)=>request('game:texas-holdem:close',{roomId});
+export const inviteTexasMember=(spaceId:string,roomId:string,targetUserId:string)=>request<{canResendAt:number}>('game:texas-holdem:invite',{spaceId,roomId,targetUserId});

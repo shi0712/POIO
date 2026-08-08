@@ -10,8 +10,9 @@ import { z } from 'zod';
 import { config } from './config.js';
 import { bootstrap, channelMessages, channelSpaceId, createChannel, createDirectMessage, createMessage, createSpace, createSpaceInvite, deleteChannel, deleteMessage, directConversations, directMessages, editMessage, joinSpace, login, markDirectMessagesRead, mentionedUserIds, previewSpaceInvite, register, removeSpaceMember, renameChannel, renameSpace, resume, revokeSession, scheduleDatabaseBackups, searchMessages, spaceMemberIds, spaceMembers, toggleMessageReaction, updateAvatar, updateJoinSound, updateLeaveSound, updateMemberModeration, userFromToken, voiceChannelForUser, type PublicUser } from './database.js';
 import * as media from './media.js';
-import { crashState, gameEvents, gameWallet, gomokuRooms, gomokuState } from './games.js';
+import { crashState, gameEvents, gameWallet, gomokuRooms, gomokuState, texasRooms, texasState } from './games.js';
 import { clearGomokuInviteCooldown } from './game-plugins/gomoku.js';
+import { clearTexasInviteCooldown } from './games/texas-holdem/plugin.js';
 import { registerGamePlugins } from './game-plugins/registry.js';
 import { claimMumbleUsername, ensureVoiceChannel, kickMumbleUser, mumbleChannelName, removeVoiceChannel, setMumbleUserMuted } from './mumble-control.js';
 import { adjustGameWallet, gameAdminAudit, isGameAdmin, listGameWallets } from './admin.js';
@@ -98,7 +99,7 @@ app.get('/api/admin/game-audit',(req,res)=>{
     adminUserFromRequest(req);res.json({entries:gameAdminAudit(value.limit)});
   }catch(error){adminFailure(res,error,error instanceof Error&&/登录|权限/.test(error.message)?401:400);}
 });
-app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '1.3.1' }));
+app.get('/health', (_req, res) => res.json({ ok: true, name: 'POIO', version: '1.4.0' }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: config.corsOrigin }, maxHttpBufferSize: 2_000_000, transports: ['websocket','polling'] });
 
@@ -207,9 +208,27 @@ const emitGomokuState = (spaceId:string,roomId:string,closed=false) => {
     if(userId)connected.emit('game:gomoku:rooms',gomokuRooms(spaceId,userId));
   }
 };
+const emitTexasState = (spaceId:string,roomId:string,closed=false) => {
+  const table=io.sockets.adapter.rooms.get(`texas:${roomId}`);
+  if(closed){
+    clearTexasInviteCooldown(roomId);
+    io.to(`space:${spaceId}`).emit('game:texas-holdem:closed',{spaceId,roomId});
+  }
+  if(table)for(const socketId of table){
+    const connected=io.sockets.sockets.get(socketId);const userId=connected?.data.user?.id;
+    if(userId&&!closed){try{connected.emit('game:texas-holdem:state',texasState(roomId,userId));}catch{} }
+    if(closed)connected?.leave(`texas:${roomId}`);
+  }
+  const gameRoom=io.sockets.adapter.rooms.get(`game:${spaceId}`);
+  if(gameRoom)for(const socketId of gameRoom){
+    const connected=io.sockets.sockets.get(socketId);const userId=connected?.data.user?.id;
+    if(userId)connected.emit('game:texas-holdem:rooms',texasRooms(spaceId,userId));
+  }
+};
 gameEvents.on('wallet:update',({userId}:{userId:string})=>emitGameWallet(userId));
 gameEvents.on('crash:update',({spaceId}:{spaceId:string})=>emitCrashState(spaceId));
 gameEvents.on('gomoku:update',({spaceId,roomId,closed=false}:{spaceId:string;roomId:string;closed?:boolean})=>emitGomokuState(spaceId,roomId,closed));
+gameEvents.on('texas:update',({spaceId,roomId,closed=false}:{spaceId:string;roomId:string;closed?:boolean})=>emitTexasState(spaceId,roomId,closed));
 const forceUserOutOfSpace = async(spaceId:string,userId:string,reason:string) => {
   const shouldKick=[...voicePresence.values()].some(entry=>entry.user.id===userId&&channelSpaceId(entry.channelId)===spaceId);
   if(shouldKick)await kickMumbleUser(userId,reason).catch(error=>console.error('Mumble member kick failed',error));
@@ -230,8 +249,8 @@ const forceUserOutOfSpace = async(spaceId:string,userId:string,reason:string) =>
 io.on('connection', (socket) => {
   socket.on('app:capabilities', (_raw, ack: Ack) => { ok(ack,{
     protocolVersion:1,
-    serverVersion:'1.3.1',
-    features:{chat:true,directMessages:true,attachments:true,chatReplies:true,chatEditing:true,chatReactions:true,chatSearch:true,chatMentions:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,voiceLeaveCues:true,customJoinSounds:true,customLeaveSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true,gameCenter:true,gamePluginRegistry:true,blackjack:true,mines:true,slots:true,wheel:true,crash:true,gomoku:true},
+    serverVersion:'1.4.0',
+    features:{chat:true,directMessages:true,attachments:true,chatReplies:true,chatEditing:true,chatReactions:true,chatSearch:true,chatMentions:true,animatedAvatars:true,communityLinks:true,mumbleVoice:true,voiceJoinCues:true,voiceLeaveCues:true,customJoinSounds:true,customLeaveSounds:true,screenReceive:true,screenPublish:true,preferredLayers:true,p2pScreenShare:true,gameCenter:true,gamePluginRegistry:true,blackjack:true,mines:true,slots:true,wheel:true,crash:true,gomoku:true,texasHoldem:true},
     media:{codecs:['video/H264','video/VP8','audio/opus'],webRtcPort:config.mediaPort},
     android:{minimumVersion:1,recommendedVersion:1}
   }); });

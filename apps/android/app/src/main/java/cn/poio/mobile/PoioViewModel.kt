@@ -152,6 +152,16 @@ class PoioViewModel(application: Application) : AndroidViewModel(application), P
     override fun openGomokuInvitation(spaceId: String, roomId: String) { viewModelScope.launch { repository.openGomokuInvitation(spaceId, roomId) } }
     override fun dismissGomokuInvitation() = repository.dismissGomokuInvitation()
     override fun inviteGomoku(spaceId: String, roomId: String, targetUserId: String) { viewModelScope.launch { repository.inviteGomoku(spaceId, roomId, targetUserId) } }
+    override fun createTexas(spaceId: String, smallBlind: Long, buyIn: Long, maxPlayers: Int) { viewModelScope.launch { repository.createTexas(spaceId, smallBlind, buyIn, maxPlayers) } }
+    override fun openTexas(spaceId: String, roomId: String, join: Boolean) { viewModelScope.launch { repository.openTexas(spaceId, roomId, join) } }
+    override fun startTexas(roomId: String) { viewModelScope.launch { repository.startTexas(roomId) } }
+    override fun actTexas(roomId: String, action: String, raiseTo: Long?) { viewModelScope.launch { repository.actTexas(roomId, action, raiseTo) } }
+    override fun leaveTexas(roomId: String) { viewModelScope.launch { repository.leaveTexas(roomId) } }
+    override fun closeTexas(roomId: String) { viewModelScope.launch { repository.closeTexas(roomId) } }
+    override fun inviteTexas(spaceId: String, roomId: String, targetUserId: String) { viewModelScope.launch { repository.inviteTexas(spaceId, roomId, targetUserId) } }
+    override fun acceptTexasInvitation() { viewModelScope.launch { repository.acceptTexasInvitation() } }
+    override fun dismissTexasInvitation() = repository.dismissTexasInvitation()
+    override fun openTexasInvitation(spaceId: String, roomId: String) { viewModelScope.launch { repository.openTexasInvitation(spaceId, roomId) } }
     override fun joinVoice(channelId: String) {
         viewModelScope.launch {
             runCatching {
@@ -352,6 +362,16 @@ interface PoioActions {
     fun openGomokuInvitation(spaceId: String, roomId: String)
     fun dismissGomokuInvitation()
     fun inviteGomoku(spaceId: String, roomId: String, targetUserId: String)
+    fun createTexas(spaceId: String, smallBlind: Long, buyIn: Long, maxPlayers: Int)
+    fun openTexas(spaceId: String, roomId: String, join: Boolean)
+    fun startTexas(roomId: String)
+    fun actTexas(roomId: String, action: String, raiseTo: Long? = null)
+    fun leaveTexas(roomId: String)
+    fun closeTexas(roomId: String)
+    fun inviteTexas(spaceId: String, roomId: String, targetUserId: String)
+    fun acceptTexasInvitation()
+    fun dismissTexasInvitation()
+    fun openTexasInvitation(spaceId: String, roomId: String)
     fun joinVoice(channelId: String)
     fun leaveVoice()
     fun setMuted(muted: Boolean)

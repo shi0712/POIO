@@ -1,2 +1,6 @@
 *
 !.gitignore
+!poio-share-sidecar.exe
+!LICENSE-libwebrtc.txt
+!LICENSE-libmediasoupclient.txt
+!LICENSE-libsdptransform.txt

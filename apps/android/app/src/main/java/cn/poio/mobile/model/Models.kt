@@ -57,17 +57,17 @@ data class DirectMessage(
     val attachmentSize: Long? = null,
     val attachmentMime: String? = null,
 )
-data class DirectGomokuInvitation(val spaceId: String, val roomId: String, val wager: Long, val pot: Long, val expiresAt: Long)
-fun parseDirectGomokuInvitation(body: String): DirectGomokuInvitation? {
+data class DirectGameInvitation(val gameId: String, val spaceId: String, val roomId: String, val wager: Long, val pot: Long, val expiresAt: Long, val smallBlind: Long = 0)
+fun parseDirectGameInvitation(body: String): DirectGameInvitation? {
     if (body.startsWith("[[POIO:GAME:INVITE:1]]|")) return runCatching {
         val encoded = body.substringAfter('|')
         val value = JSONObject(String(android.util.Base64.decode(encoded, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP), Charsets.UTF_8))
-        if (value.optString("gameId") != "gomoku") return null
-        DirectGomokuInvitation(value.getString("spaceId"), value.getString("roomId"), value.optLong("wager"), value.optLong("pot"), value.optLong("expiresAt"))
+        val gameId=value.optString("gameId");if(gameId!="gomoku"&&gameId!="texas-holdem")return null
+        DirectGameInvitation(gameId,value.getString("spaceId"), value.getString("roomId"), value.optLong("wager"), value.optLong("pot"), value.optLong("expiresAt"),value.optJSONObject("metadata")?.optLong("smallBlind")?:0)
     }.getOrNull()
     val parts = body.split('|')
     if (parts.size != 6 || parts[0] != "[[POIO:GOMOKU:INVITE:1]]") return null
-    return DirectGomokuInvitation(parts[1], parts[2], parts[3].toLongOrNull() ?: return null, parts[4].toLongOrNull() ?: return null, parts[5].toLongOrNull() ?: return null)
+    return DirectGameInvitation("gomoku",parts[1], parts[2], parts[3].toLongOrNull() ?: return null, parts[4].toLongOrNull() ?: return null, parts[5].toLongOrNull() ?: return null)
 }
 data class DirectConversation(
     val user: User,

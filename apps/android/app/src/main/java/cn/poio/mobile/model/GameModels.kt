@@ -140,6 +140,31 @@ data class GomokuGame(
     val canMove: Boolean,
 )
 
+data class TexasPlayer(
+    val id: String, val username: String, val avatarUrl: String? = null, val seat: Int, val stack: Long,
+    val status: String, val streetBet: Long, val totalBet: Long, val hole: List<GameCard>, val cardsHidden: Int,
+    val isHost: Boolean, val isDealer: Boolean, val blind: String? = null,
+)
+
+data class TexasWinner(val userId: String, val amount: Long, val handName: String)
+data class TexasRoom(
+    val roomId: String, val status: String, val smallBlind: Long, val bigBlind: Long, val buyIn: Long,
+    val maxPlayers: Int, val players: List<TexasPlayer>, val handNumber: Int, val pot: Long,
+    val updatedAt: Long, val isMine: Boolean,
+)
+data class TexasGame(
+    val roomId: String, val spaceId: String, val hostUserId: String, val smallBlind: Long, val bigBlind: Long,
+    val buyIn: Long, val maxPlayers: Int, val status: String, val street: String, val handNumber: Int,
+    val currentUserId: String? = null, val currentBet: Long, val minRaise: Long, val pot: Long,
+    val community: List<GameCard>, val actionDeadline: Long? = null, val winners: List<TexasWinner>,
+    val players: List<TexasPlayer>, val meSeat: Int? = null, val spectator: Boolean, val canAct: Boolean,
+    val toCall: Long, val minRaiseTo: Long, val canStart: Boolean, val proof: FairProof? = null,
+)
+data class TexasInvitation(
+    val spaceId: String, val roomId: String, val buyIn: Long, val smallBlind: Long,
+    val inviter: User, val expiresAt: Long,
+)
+
 data class GameCenterState(
     val loading: Boolean = false,
     val open: Boolean = false,
@@ -151,12 +176,19 @@ data class GameCenterState(
     val crash: CrashGame? = null,
     val gomokuRooms: List<GomokuRoom> = emptyList(),
     val gomoku: GomokuGame? = null,
+    val texasRooms: List<TexasRoom> = emptyList(),
+    val texas: TexasGame? = null,
 )
 
 object GameJson {
     fun gomokuInvitation(value: JSONObject) = GomokuInvitation(
         spaceId = value.optString("spaceId"), roomId = value.optString("roomId"),
         wager = value.optLong("wager"), pot = value.optLong("pot"),
+        inviter = PoioJson.user(value.getJSONObject("inviter")), expiresAt = value.optLong("expiresAt"),
+    )
+    fun texasInvitation(value: JSONObject) = TexasInvitation(
+        spaceId = value.optString("spaceId"), roomId = value.optString("roomId"),
+        buyIn = value.optLong("buyIn"), smallBlind = value.optLong("smallBlind"),
         inviter = PoioJson.user(value.getJSONObject("inviter")), expiresAt = value.optLong("expiresAt"),
     )
     fun wallet(value: JSONObject) = GameWallet(
@@ -280,6 +312,41 @@ object GameJson {
             rematchVotes = buildList { val votes = it.optJSONArray("rematchVotes"); if (votes != null) for (index in 0 until votes.length()) add(votes.optString(index)) },
             roundNumber = it.optInt("roundNumber", 1), players = it.optJSONArray("players").objects().map(::gomokuPlayer),
             me = it.optString("me", "spectator"), canMove = it.optBoolean("canMove"),
+        )
+    }
+
+    private fun texasPlayer(value: JSONObject) = TexasPlayer(
+        id = value.optString("id"), username = value.optString("username"),
+        avatarUrl = value.optString("avatarUrl").takeIf(String::isNotBlank), seat = value.optInt("seat"),
+        stack = value.optLong("stack"), status = value.optString("status"), streetBet = value.optLong("streetBet"),
+        totalBet = value.optLong("totalBet"), hole = value.optJSONArray("hole").objects().map(::card),
+        cardsHidden = value.optInt("cardsHidden"), isHost = value.optBoolean("isHost"), isDealer = value.optBoolean("isDealer"),
+        blind = value.optString("blind").takeIf(String::isNotBlank),
+    )
+
+    fun texasRooms(value: org.json.JSONArray?) = value.objects().map {
+        TexasRoom(
+            roomId = it.optString("roomId"), status = it.optString("status"), smallBlind = it.optLong("smallBlind"),
+            bigBlind = it.optLong("bigBlind"), buyIn = it.optLong("buyIn"), maxPlayers = it.optInt("maxPlayers", 6),
+            players = it.optJSONArray("players").objects().map(::texasPlayer), handNumber = it.optInt("handNumber"),
+            pot = it.optLong("pot"), updatedAt = it.optLong("updatedAt"), isMine = it.optBoolean("isMine"),
+        )
+    }
+
+    fun texas(value: JSONObject?) = value?.let {
+        val me = it.opt("me")
+        TexasGame(
+            roomId = it.optString("roomId"), spaceId = it.optString("spaceId"), hostUserId = it.optString("hostUserId"),
+            smallBlind = it.optLong("smallBlind"), bigBlind = it.optLong("bigBlind"), buyIn = it.optLong("buyIn"),
+            maxPlayers = it.optInt("maxPlayers", 6), status = it.optString("status"), street = it.optString("street"),
+            handNumber = it.optInt("handNumber"), currentUserId = it.optString("currentUserId").takeIf(String::isNotBlank),
+            currentBet = it.optLong("currentBet"), minRaise = it.optLong("minRaise"), pot = it.optLong("pot"),
+            community = it.optJSONArray("community").objects().map(::card),
+            actionDeadline = it.takeIf { json -> json.has("actionDeadline") && !json.isNull("actionDeadline") }?.optLong("actionDeadline"),
+            winners = it.optJSONArray("winners").objects().map { winner -> TexasWinner(winner.optString("userId"), winner.optLong("amount"), winner.optString("handName")) },
+            players = it.optJSONArray("players").objects().map(::texasPlayer), meSeat = (me as? JSONObject)?.optInt("seat"),
+            spectator = me !is JSONObject, canAct = it.optBoolean("canAct"), toCall = it.optLong("toCall"),
+            minRaiseTo = it.optLong("minRaiseTo"), canStart = it.optBoolean("canStart"), proof = it.optJSONObject("proof")?.let(::proof),
         )
     }
 }

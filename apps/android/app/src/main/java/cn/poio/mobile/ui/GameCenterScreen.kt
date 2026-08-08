@@ -94,6 +94,7 @@ import cn.poio.mobile.ui.games.mines.MinesView
 import cn.poio.mobile.ui.games.shared.points
 import cn.poio.mobile.ui.games.slots.SlotsView
 import cn.poio.mobile.ui.games.wheel.WheelView
+import cn.poio.mobile.ui.games.texasholdem.TexasHoldemView
 import java.text.NumberFormat
 import kotlin.math.ln
 import kotlin.math.max
@@ -119,9 +120,11 @@ fun GameCenterScreen(
     var wager by remember { mutableLongStateOf(100) }
     var mineCount by remember { mutableIntStateOf(5) }
     var inviteOpen by remember { mutableStateOf(false) }
+    var inviteGame by remember { mutableStateOf(MobileGame.GOMOKU) }
     val invitedUntil = remember { mutableStateMapOf<String, Long>() }
     var inviteClock by remember { mutableLongStateOf(System.currentTimeMillis()) }
     androidx.compose.runtime.LaunchedEffect(state.gomoku?.roomId) { invitedUntil.clear(); inviteOpen = false }
+    androidx.compose.runtime.LaunchedEffect(state.texas?.roomId) { invitedUntil.clear(); inviteOpen = false }
     androidx.compose.runtime.LaunchedEffect(inviteOpen) { while (inviteOpen) { inviteClock = System.currentTimeMillis(); delay(500) } }
     Column(Modifier.fillMaxSize().background(GameBackground)) {
         GameTopBar(
@@ -144,18 +147,21 @@ fun GameCenterScreen(
             game == MobileGame.CRASH -> CrashView(state.crash, wager, busy, { wager = it }, spaceId, actions)
             game == MobileGame.SLOTS -> SlotsView(state.slots, state.wallet.freeSpins, wager, busy, { wager = it }, actions)
             game == MobileGame.WHEEL -> WheelView(state.wheel, wager, busy, { wager = it }, actions)
-            else -> GomokuView(state.gomoku, state.gomokuRooms, spaceId, wager, busy, { wager = it }, actions) { inviteOpen = true }
+            game == MobileGame.GOMOKU -> GomokuView(state.gomoku, state.gomokuRooms, spaceId, wager, busy, { wager = it }, actions) { inviteGame=MobileGame.GOMOKU;inviteOpen = true }
+            else -> TexasHoldemView(state.texas, state.texasRooms, spaceId, busy, actions) { inviteGame=MobileGame.TEXAS_HOLDEM;inviteOpen = true }
         }
     }
-    if (inviteOpen && state.gomoku != null) AlertDialog(
+    val invitePlayerIds=if(inviteGame==MobileGame.TEXAS_HOLDEM)state.texas?.players?.map{it.id}?.toSet() else state.gomoku?.players?.map{it.id}?.toSet()
+    val inviteRoomId=if(inviteGame==MobileGame.TEXAS_HOLDEM)state.texas?.roomId else state.gomoku?.roomId
+    if (inviteOpen && invitePlayerIds != null && inviteRoomId != null) AlertDialog(
         onDismissRequest = { inviteOpen = false },
         title = { Text("邀请在线成员", fontWeight = FontWeight.Black) },
         text = { LazyColumn(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            val available = onlineMembers.filter { member -> state.gomoku.players.none { it.id == member.id } }
+            val available = onlineMembers.filter { member -> member.id !in invitePlayerIds }
             if (available.isEmpty()) item { Text("暂时没有可邀请的在线成员", color = Color(0xFF8B8E9C)) }
             items(available, key = User::id) { member -> val remaining=((invitedUntil[member.id]?:0L)-inviteClock).coerceAtLeast(0); Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = .04f)).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(member.username, Modifier.weight(1f), fontWeight = FontWeight.Bold)
-                Button(enabled=remaining<=0,onClick = { actions.inviteGomoku(spaceId, state.gomoku.roomId, member.id); invitedUntil[member.id]=System.currentTimeMillis()+5_000 }) { Icon(Icons.Default.PersonAdd, null); Spacer(Modifier.width(5.dp)); Text(if(remaining>0)"已邀请 ${kotlin.math.ceil(remaining/1000.0).toInt()}s" else if(invitedUntil.containsKey(member.id))"重新邀请" else "邀请") }
+                Button(enabled=remaining<=0,onClick = { if(inviteGame==MobileGame.TEXAS_HOLDEM)actions.inviteTexas(spaceId,inviteRoomId,member.id)else actions.inviteGomoku(spaceId,inviteRoomId,member.id); invitedUntil[member.id]=System.currentTimeMillis()+5_000 }) { Icon(Icons.Default.PersonAdd, null); Spacer(Modifier.width(5.dp)); Text(if(remaining>0)"已邀请 ${kotlin.math.ceil(remaining/1000.0).toInt()}s" else if(invitedUntil.containsKey(member.id))"重新邀请" else "邀请") }
             } }
         } },
         confirmButton = { TextButton(onClick = { inviteOpen = false }) { Text("完成") } },
