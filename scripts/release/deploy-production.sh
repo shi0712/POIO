@@ -53,7 +53,7 @@ rollback() {
   sudo rm -rf "$base/apps/server" "$base/deploy/download"
   sudo tar -xzf "$backup/source.tgz" -C "$base"
   sudo docker tag "$previous_image" "$(awk '/image: poio\/server:/{print $2; exit}' "$base/docker-compose.yml")"
-  sudo docker compose -f "$base/docker-compose.yml" up -d --no-deps server
+  sudo docker compose -f "$base/docker-compose.yml" up -d --no-deps --force-recreate server
   if [[ -f "$backup/web.tgz" ]]; then
     sudo rm -rf "$public_root/poio-web/current"
     sudo tar -xzf "$backup/web.tgz" -C "$public_root/poio-web"
@@ -77,7 +77,7 @@ sudo cp -a "$incoming/source/package.json" "$incoming/source/package-lock.json" 
   "$incoming/source/Dockerfile" "$incoming/source/docker-compose.yml" "$base/"
 
 sudo docker tag "$candidate_image" "$stable_image"
-sudo docker compose -f "$base/docker-compose.yml" up -d --no-deps server
+sudo docker compose -f "$base/docker-compose.yml" up -d --no-deps --force-recreate server
 
 healthy=0
 for _ in $(seq 1 30); do
